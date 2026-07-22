@@ -2,6 +2,8 @@ import Link from "next/link";
 import { getBankSummary } from "@/app/lib/data";
 import { QUESTION_STATUS_LABELS } from "@/app/lib/constants";
 
+export const dynamic = "force-dynamic";
+
 export default async function Home() {
   const summary = await getBankSummary();
 
