@@ -1,0 +1,840 @@
+generator client {
+  provider        = "prisma-client"
+  output          = "../app/generated/prisma"
+  previewFeatures = ["partialIndexes"]
+}
+
+datasource db {
+  provider = "sqlserver"
+}
+
+model Attempt {
+  AttemptId      BigInt                   @id(map: "PK__Attempt__891A68E69B66C2E7") @default(autoincrement())
+  MockTestId     BigInt
+  StudentId      String                   @db.NVarChar(500)
+  RandomSeed     BigInt
+  AlgoVersion    Int                      @db.TinyInt
+  Locale         String                   @default("en", map: "DF__Attempt__Locale__719CDDE7") @db.VarChar(10)
+  Status         Int                      @default(0, map: "DF__Attempt__Status__72910220") @db.TinyInt
+  StartedOn      DateTime                 @default(now(), map: "DF__Attempt__Started__73852659") @db.DateTime
+  SubmittedOn    DateTime?                @db.DateTime
+  GradedOn       DateTime?                @db.DateTime
+  PausedTotalSec Int                      @default(0, map: "DF__Attempt__PausedT__74794A92")
+  ScoreTotal     Decimal?                 @db.Decimal(7, 2)
+  DeviceJson     String?                  @db.NVarChar(400)
+  IpAddress      String?                  @db.VarChar(45)
+  FranchiseId    BigInt?
+  IsActive       Boolean                  @default(true, map: "DF__Attempt__IsActiv__756D6ECB")
+  IsDeleted      Boolean                  @default(false, map: "DF__Attempt__IsDelet__76619304")
+  CreatedBy      String                   @db.NVarChar(500)
+  CreatedOn      DateTime                 @default(now(), map: "DF__Attempt__Created__7755B73D") @db.DateTime
+  CreatedIp      String?                  @db.NVarChar(50)
+  ModifiedBy     String?                  @db.NVarChar(500)
+  ModifiedOn     DateTime?                @db.DateTime
+  ModifiedIp     String?                  @db.NVarChar(50)
+  RowVer         Unsupported("timestamp")
+  MockTest       MockTest                 @relation(fields: [MockTestId], references: [MockTestId], onUpdate: NoAction, map: "FK__Attempt__MockTes__70A8B9AE")
+  AttemptAnswer  AttemptAnswer[]
+  AttemptEvent   AttemptEvent[]
+  AttemptSection AttemptSection[]
+
+  @@index([StudentId, MockTestId], map: "IX_Attempt_Student")
+  @@index([MockTestId, Status], map: "IX_Attempt_Test")
+}
+
+model AttemptAnswer {
+  AttemptId       BigInt
+  QuestionId      BigInt
+  VersionId       BigInt
+  State           Int             @default(0, map: "DF__AttemptAn__State__04AFB25B") @db.TinyInt
+  ResponseJson    String?         @db.NVarChar(Max)
+  TimeSpentSec    Int             @default(0, map: "DF__AttemptAn__TimeS__05A3D694")
+  ChangeCount     Int             @default(0, map: "DF__AttemptAn__Chang__0697FACD") @db.SmallInt
+  MarksAwarded    Decimal?        @db.Decimal(5, 2)
+  AnsweredOn      DateTime?       @db.DateTime
+  GradedOn        DateTime?       @db.DateTime
+  FranchiseId     BigInt?
+  IsActive        Boolean         @default(true, map: "DF__AttemptAn__IsAct__078C1F06")
+  IsDeleted       Boolean         @default(false, map: "DF__AttemptAn__IsDel__0880433F")
+  CreatedBy       String          @db.NVarChar(500)
+  CreatedOn       DateTime        @default(now(), map: "DF__AttemptAn__Creat__09746778") @db.DateTime
+  CreatedIp       String?         @db.NVarChar(50)
+  ModifiedBy      String?         @db.NVarChar(500)
+  ModifiedOn      DateTime?       @db.DateTime
+  ModifiedIp      String?         @db.NVarChar(50)
+  Attempt         Attempt         @relation(fields: [AttemptId], references: [AttemptId], onUpdate: NoAction, map: "FK__AttemptAn__Attem__01D345B0")
+  Question        Question        @relation(fields: [QuestionId], references: [QuestionId], onUpdate: NoAction, map: "FK__AttemptAn__Quest__02C769E9")
+  QuestionVersion QuestionVersion @relation(fields: [VersionId], references: [VersionId], onUpdate: NoAction, map: "FK__AttemptAn__Versi__03BB8E22")
+
+  @@id([AttemptId, QuestionId], map: "PK__AttemptA__59C66E1CFC744F6D")
+}
+
+model AttemptEvent {
+  EventId     BigInt    @id(map: "PK__AttemptE__7944C810BA3C13DB") @default(autoincrement())
+  AttemptId   BigInt
+  QuestionId  BigInt?
+  EventType   Int       @db.TinyInt
+  PayloadJson String?
+  OccurredOn  DateTime  @default(now(), map: "DF__AttemptEv__Occur__0E391C95") @db.DateTime
+  FranchiseId BigInt?
+  IsActive    Boolean   @default(true, map: "DF__AttemptEv__IsAct__0F2D40CE")
+  IsDeleted   Boolean   @default(false, map: "DF__AttemptEv__IsDel__10216507")
+  CreatedBy   String    @db.NVarChar(500)
+  CreatedOn   DateTime  @default(now(), map: "DF__AttemptEv__Creat__11158940") @db.DateTime
+  CreatedIp   String?   @db.NVarChar(50)
+  ModifiedBy  String?   @db.NVarChar(500)
+  ModifiedOn  DateTime? @db.DateTime
+  ModifiedIp  String?   @db.NVarChar(50)
+  Attempt     Attempt   @relation(fields: [AttemptId], references: [AttemptId], onUpdate: NoAction, map: "FK__AttemptEv__Attem__0C50D423")
+  Question    Question? @relation(fields: [QuestionId], references: [QuestionId], onDelete: NoAction, onUpdate: NoAction, map: "FK__AttemptEv__Quest__0D44F85C")
+
+  @@index([AttemptId, OccurredOn], map: "IX_AttemptEvent")
+}
+
+model AttemptSection {
+  AttemptId    BigInt
+  SectionId    BigInt
+  StartedOn    DateTime?    @db.DateTime
+  EndsOn       DateTime?    @db.DateTime
+  RemainingSec Int?
+  Status       Int          @default(0, map: "DF__AttemptSe__Statu__7C1A6C5A") @db.TinyInt
+  FranchiseId  BigInt?
+  IsActive     Boolean      @default(true, map: "DF__AttemptSe__IsAct__7D0E9093")
+  IsDeleted    Boolean      @default(false, map: "DF__AttemptSe__IsDel__7E02B4CC")
+  CreatedBy    String       @db.NVarChar(500)
+  CreatedOn    DateTime     @default(now(), map: "DF__AttemptSe__Creat__7EF6D905") @db.DateTime
+  CreatedIp    String?      @db.NVarChar(50)
+  ModifiedBy   String?      @db.NVarChar(500)
+  ModifiedOn   DateTime?    @db.DateTime
+  ModifiedIp   String?      @db.NVarChar(50)
+  Attempt      Attempt      @relation(fields: [AttemptId], references: [AttemptId], onUpdate: NoAction, map: "FK__AttemptSe__Attem__7A3223E8")
+  PaperSection PaperSection @relation(fields: [SectionId], references: [SectionId], onUpdate: NoAction, map: "FK__AttemptSe__Secti__7B264821")
+
+  @@id([AttemptId, SectionId], map: "PK__AttemptS__B1149861F56AD54F")
+}
+
+model AuditEvent {
+  EventId       BigInt    @id(map: "PK__AuditEve__7944C810C4EEC507") @default(autoincrement())
+  Actor         String    @db.NVarChar(500)
+  EntityType    String    @db.VarChar(50)
+  EntityId      BigInt
+  Action        String    @db.VarChar(20)
+  DiffJson      String?   @db.NVarChar(Max)
+  CorrelationId String?   @db.UniqueIdentifier
+  OccurredOn    DateTime  @default(now(), map: "DF__AuditEven__Occur__3BFFE745") @db.DateTime
+  FranchiseId   BigInt?
+  IsActive      Boolean   @default(true, map: "DF__AuditEven__IsAct__3CF40B7E")
+  IsDeleted     Boolean   @default(false, map: "DF__AuditEven__IsDel__3DE82FB7")
+  CreatedBy     String    @db.NVarChar(500)
+  CreatedOn     DateTime  @default(now(), map: "DF__AuditEven__Creat__3EDC53F0") @db.DateTime
+  CreatedIp     String?   @db.NVarChar(50)
+  ModifiedBy    String?   @db.NVarChar(500)
+  ModifiedOn    DateTime? @db.DateTime
+  ModifiedIp    String?   @db.NVarChar(50)
+
+  @@index([Actor, OccurredOn], map: "IX_Audit_Actor")
+  @@index([EntityType, EntityId, OccurredOn], map: "IX_Audit_Entity")
+}
+
+model BlueprintTemplate {
+  TemplateId  BigInt    @id(map: "PK__Blueprin__F87ADD27D8627990") @default(autoincrement())
+  Name        String    @db.NVarChar(200)
+  FilterJson  String    @db.NVarChar(Max)
+  FranchiseId BigInt?
+  IsActive    Boolean   @default(true, map: "DF__Blueprint__IsAct__4C6B5938")
+  IsDeleted   Boolean   @default(false, map: "DF__Blueprint__IsDel__4D5F7D71")
+  CreatedBy   String    @db.NVarChar(500)
+  CreatedOn   DateTime  @default(now(), map: "DF__Blueprint__Creat__4E53A1AA") @db.DateTime
+  CreatedIp   String?   @db.NVarChar(50)
+  ModifiedBy  String?   @db.NVarChar(500)
+  ModifiedOn  DateTime? @db.DateTime
+  ModifiedIp  String?   @db.NVarChar(50)
+}
+
+model Branch {
+  BranchId    BigInt     @id(map: "PK__Branch__A1682FC5989677EA") @default(autoincrement())
+  Name        String     @db.NVarChar(200)
+  City        String?    @db.NVarChar(100)
+  FranchiseId BigInt?
+  IsActive    Boolean    @default(true, map: "DF__Branch__IsActive__37A5467C")
+  IsDeleted   Boolean    @default(false, map: "DF__Branch__IsDelete__38996AB5")
+  CreatedBy   String     @db.NVarChar(500)
+  CreatedOn   DateTime   @default(now(), map: "DF__Branch__CreatedO__398D8EEE") @db.DateTime
+  CreatedIp   String?    @db.NVarChar(50)
+  ModifiedBy  String?    @db.NVarChar(500)
+  ModifiedOn  DateTime?  @db.DateTime
+  ModifiedIp  String?    @db.NVarChar(50)
+  MockTest    MockTest[]
+}
+
+model ExamBody {
+  BodyId      BigInt        @id(map: "PK__ExamBody__8545D8D5B99E0A2D") @default(autoincrement())
+  Name        String        @db.NVarChar(150)
+  FranchiseId BigInt?
+  IsActive    Boolean       @default(true, map: "DF__ExamBody__IsActi__3C69FB99")
+  IsDeleted   Boolean       @default(false, map: "DF__ExamBody__IsDele__3D5E1FD2")
+  CreatedBy   String        @db.NVarChar(500)
+  CreatedOn   DateTime      @default(now(), map: "DF__ExamBody__Create__3E52440B") @db.DateTime
+  CreatedIp   String?       @db.NVarChar(50)
+  ModifiedBy  String?       @db.NVarChar(500)
+  ModifiedOn  DateTime?     @db.DateTime
+  ModifiedIp  String?       @db.NVarChar(50)
+  ExamProgram ExamProgram[]
+}
+
+model ExamPaper {
+  PaperId         BigInt                   @id(map: "PK__ExamPape__AB86120B53D65387") @default(autoincrement())
+  StageId         BigInt
+  Code            String                   @db.VarChar(30)
+  Name            String                   @db.NVarChar(200)
+  TotalMarks      Decimal                  @db.Decimal(6, 2)
+  DurationMin     Int
+  IsQualifying    Boolean                  @default(false, map: "DF__ExamPaper__IsQua__5535A963")
+  DefaultSchemeId BigInt?
+  DefaultLocale   String                   @default("en", map: "DF__ExamPaper__Defau__571DF1D5") @db.VarChar(10)
+  FranchiseId     BigInt?
+  IsActive        Boolean                  @default(true, map: "DF__ExamPaper__IsAct__5812160E")
+  IsDeleted       Boolean                  @default(false, map: "DF__ExamPaper__IsDel__59063A47")
+  CreatedBy       String                   @db.NVarChar(500)
+  CreatedOn       DateTime                 @default(now(), map: "DF__ExamPaper__Creat__59FA5E80") @db.DateTime
+  CreatedIp       String?                  @db.NVarChar(50)
+  ModifiedBy      String?                  @db.NVarChar(500)
+  ModifiedOn      DateTime?                @db.DateTime
+  ModifiedIp      String?                  @db.NVarChar(50)
+  RowVer          Unsupported("timestamp")
+  MarkingScheme   MarkingScheme?           @relation(fields: [DefaultSchemeId], references: [SchemeId], onDelete: NoAction, onUpdate: NoAction, map: "FK__ExamPaper__Defau__5629CD9C")
+  ExamStage       ExamStage                @relation(fields: [StageId], references: [StageId], onUpdate: NoAction, map: "FK__ExamPaper__Stage__5441852A")
+  MockTest        MockTest[]
+  PaperSection    PaperSection[]
+  QuestionMarks   QuestionMarks[]
+
+  @@unique([StageId, Code], map: "UQ_ExamPaper_Code")
+}
+
+model ExamProgram {
+  ProgramId   BigInt      @id(map: "PK__ExamProg__75256058A8D0D80F") @default(autoincrement())
+  BodyId      BigInt
+  Code        String      @db.VarChar(30)
+  Name        String      @db.NVarChar(150)
+  FranchiseId BigInt?
+  IsActive    Boolean     @default(true, map: "DF__ExamProgr__IsAct__4316F928")
+  IsDeleted   Boolean     @default(false, map: "DF__ExamProgr__IsDel__440B1D61")
+  CreatedBy   String      @db.NVarChar(500)
+  CreatedOn   DateTime    @default(now(), map: "DF__ExamProgr__Creat__44FF419A") @db.DateTime
+  CreatedIp   String?     @db.NVarChar(50)
+  ModifiedBy  String?     @db.NVarChar(500)
+  ModifiedOn  DateTime?   @db.DateTime
+  ModifiedIp  String?     @db.NVarChar(50)
+  ExamBody    ExamBody    @relation(fields: [BodyId], references: [BodyId], onUpdate: NoAction, map: "FK__ExamProgr__BodyI__4222D4EF")
+  ExamStage   ExamStage[]
+
+  @@unique([BodyId, Code], map: "UQ_ExamProgram_Code")
+}
+
+model ExamStage {
+  StageId     BigInt      @id(map: "PK__ExamStag__03EB7AD8BE2ECCF7") @default(autoincrement())
+  ProgramId   BigInt
+  Code        String      @db.VarChar(30)
+  Name        String      @db.NVarChar(150)
+  SeqNo       Int
+  FranchiseId BigInt?
+  IsActive    Boolean     @default(true, map: "DF__ExamStage__IsAct__49C3F6B7")
+  IsDeleted   Boolean     @default(false, map: "DF__ExamStage__IsDel__4AB81AF0")
+  CreatedBy   String      @db.NVarChar(500)
+  CreatedOn   DateTime    @default(now(), map: "DF__ExamStage__Creat__4BAC3F29") @db.DateTime
+  CreatedIp   String?     @db.NVarChar(50)
+  ModifiedBy  String?     @db.NVarChar(500)
+  ModifiedOn  DateTime?   @db.DateTime
+  ModifiedIp  String?     @db.NVarChar(50)
+  ExamPaper   ExamPaper[]
+  ExamProgram ExamProgram @relation(fields: [ProgramId], references: [ProgramId], onUpdate: NoAction, map: "FK__ExamStage__Progr__48CFD27E")
+  Tag         Tag[]
+
+  @@unique([ProgramId, Code], map: "UQ_ExamStage_Code")
+}
+
+model MarkingScheme {
+  SchemeId    BigInt                   @id(map: "PK__MarkingS__DB7E1A623A100DF3") @default(autoincrement())
+  Name        String                   @db.NVarChar(150)
+  RulesJson   String                   @db.NVarChar(Max)
+  FranchiseId BigInt?
+  IsActive    Boolean                  @default(true, map: "DF__MarkingSc__IsAct__4E88ABD4")
+  IsDeleted   Boolean                  @default(false, map: "DF__MarkingSc__IsDel__4F7CD00D")
+  CreatedBy   String                   @db.NVarChar(500)
+  CreatedOn   DateTime                 @default(now(), map: "DF__MarkingSc__Creat__5070F446") @db.DateTime
+  CreatedIp   String?                  @db.NVarChar(50)
+  ModifiedBy  String?                  @db.NVarChar(500)
+  ModifiedOn  DateTime?                @db.DateTime
+  ModifiedIp  String?                  @db.NVarChar(50)
+  RowVer      Unsupported("timestamp")
+  ExamPaper   ExamPaper[]
+}
+
+model MediaAsset {
+  AssetId     BigInt    @id(map: "PK__MediaAss__43492352E8FD4F40") @default(autoincrement())
+  Kind        Int       @db.TinyInt
+  BlobKey     String?   @unique(map: "UQ_Media_Blob", where: raw("([BlobKey] IS NOT NULL)")) @db.VarChar(400)
+  ExternalUrl String?
+  MimeType    String    @db.VarChar(100)
+  SizeBytes   BigInt?
+  DurationSec Int?
+  Checksum    String?   @db.Char(64)
+  FranchiseId BigInt?
+  IsActive    Boolean   @default(true, map: "DF__MediaAsse__IsAct__40F9A68C")
+  IsDeleted   Boolean   @default(false, map: "DF__MediaAsse__IsDel__41EDCAC5")
+  CreatedBy   String    @db.NVarChar(500)
+  CreatedOn   DateTime  @default(now(), map: "DF__MediaAsse__Creat__42E1EEFE") @db.DateTime
+  CreatedIp   String?   @db.NVarChar(50)
+  ModifiedBy  String?   @db.NVarChar(500)
+  ModifiedOn  DateTime? @db.DateTime
+  ModifiedIp  String?   @db.NVarChar(50)
+
+  @@index([Checksum], map: "IX_Media_Checksum", where: raw("([Checksum] IS NOT NULL)"))
+}
+
+model MockTest {
+  MockTestId          BigInt                   @id(map: "PK__MockTest__069E78ABAC8ED0FD") @default(autoincrement())
+  Code                String                   @unique(map: "UQ__MockTest__A25C5AA760B031AA") @db.VarChar(50)
+  BranchId            BigInt?
+  PaperId             BigInt
+  TestKindId          Int                      @db.TinyInt
+  Name                String                   @db.NVarChar(200)
+  Instructions        String?                  @db.NVarChar(Max)
+  Status              Int                      @default(0, map: "DF__MockTest__Status__55009F39") @db.TinyInt
+  SettingsJson        String?                  @db.NVarChar(Max)
+  SelectionPolicyJson String?                  @db.NVarChar(Max)
+  PublishedOn         DateTime?                @db.DateTime
+  WindowStart         DateTime?                @db.DateTime
+  WindowEnd           DateTime?                @db.DateTime
+  FranchiseId         BigInt?
+  IsActive            Boolean                  @default(true, map: "DF__MockTest__IsActi__55F4C372")
+  IsDeleted           Boolean                  @default(false, map: "DF__MockTest__IsDele__56E8E7AB")
+  CreatedBy           String                   @db.NVarChar(500)
+  CreatedOn           DateTime                 @default(now(), map: "DF__MockTest__Create__57DD0BE4") @db.DateTime
+  CreatedIp           String?                  @db.NVarChar(50)
+  ModifiedBy          String?                  @db.NVarChar(500)
+  ModifiedOn          DateTime?                @db.DateTime
+  ModifiedIp          String?                  @db.NVarChar(50)
+  RowVer              Unsupported("timestamp")
+  Attempt             Attempt[]
+  Branch              Branch?                  @relation(fields: [BranchId], references: [BranchId], onDelete: NoAction, onUpdate: NoAction, map: "FK__MockTest__Branch__5224328E")
+  ExamPaper           ExamPaper                @relation(fields: [PaperId], references: [PaperId], onUpdate: NoAction, map: "FK__MockTest__PaperI__531856C7")
+  TestKind            TestKind                 @relation(fields: [TestKindId], references: [TestKindId], onUpdate: NoAction, map: "FK__MockTest__TestKi__540C7B00")
+  TestPool            TestPool[]
+  TestQuestion        TestQuestion[]
+
+  @@index([FranchiseId, Status, TestKindId], map: "IX_MockTest_Franchise", where: raw("([IsDeleted]=(0))"))
+}
+
+model PaperSection {
+  SectionId      BigInt                   @id(map: "PK__PaperSec__80EF0872D04B4D44") @default(autoincrement())
+  PaperId        BigInt
+  Name           String                   @db.NVarChar(100)
+  SeqNo          Int
+  RulesJson      String                   @db.NVarChar(Max)
+  FranchiseId    BigInt?
+  IsActive       Boolean                  @default(true, map: "DF__PaperSect__IsAct__5EBF139D")
+  IsDeleted      Boolean                  @default(false, map: "DF__PaperSect__IsDel__5FB337D6")
+  CreatedBy      String                   @db.NVarChar(500)
+  CreatedOn      DateTime                 @default(now(), map: "DF__PaperSect__Creat__60A75C0F") @db.DateTime
+  CreatedIp      String?                  @db.NVarChar(50)
+  ModifiedBy     String?                  @db.NVarChar(500)
+  ModifiedOn     DateTime?                @db.DateTime
+  ModifiedIp     String?                  @db.NVarChar(50)
+  RowVer         Unsupported("timestamp")
+  AttemptSection AttemptSection[]
+  ExamPaper      ExamPaper                @relation(fields: [PaperId], references: [PaperId], onUpdate: NoAction, map: "FK__PaperSect__Paper__5DCAEF64")
+  TestPool       TestPool[]
+  TestQuestion   TestQuestion[]
+
+  @@unique([PaperId, SeqNo], map: "UQ_PaperSection_Seq")
+}
+
+model Question {
+  QuestionId                                                    BigInt                   @id(map: "PK__Question__0DC06FAC73E5B824") @default(autoincrement())
+  Code                                                          String                   @unique(map: "UQ__Question__A25C5AA7D97B352C") @db.VarChar(50)
+  QuestionTypeId                                                Int
+  Difficulty                                                    Int                      @db.TinyInt
+  Status                                                        Int                      @default(0, map: "DF__Question__Status__08B54D69") @db.TinyInt
+  EstSolveSec                                                   Int?                     @db.SmallInt
+  GroupId                                                       BigInt?
+  GroupSeq                                                      Int?
+  CurrentVersionId                                              BigInt?
+  ApprovedBy                                                    String?                  @db.NVarChar(500)
+  ApprovedOn                                                    DateTime?                @db.DateTime
+  FranchiseId                                                   BigInt?
+  IsActive                                                      Boolean                  @default(true, map: "DF__Question__IsActi__0A9D95DB")
+  IsDeleted                                                     Boolean                  @default(false, map: "DF__Question__IsDele__0B91BA14")
+  CreatedBy                                                     String                   @db.NVarChar(500)
+  CreatedOn                                                     DateTime                 @default(now(), map: "DF__Question__Create__0C85DE4D") @db.DateTime
+  CreatedIp                                                     String?                  @db.NVarChar(50)
+  ModifiedBy                                                    String?                  @db.NVarChar(500)
+  ModifiedOn                                                    DateTime?                @db.DateTime
+  ModifiedIp                                                    String?                  @db.NVarChar(50)
+  RowVer                                                        Unsupported("timestamp")
+  AttemptAnswer                                                 AttemptAnswer[]
+  AttemptEvent                                                  AttemptEvent[]
+  QuestionGroup                                                 QuestionGroup?           @relation(fields: [GroupId], references: [GroupId], onDelete: NoAction, onUpdate: NoAction, map: "FK__Question__GroupI__09A971A2")
+  QuestionType                                                  QuestionType             @relation(fields: [QuestionTypeId], references: [QuestionTypeId], onUpdate: NoAction, map: "FK__Question__Questi__07C12930")
+  QuestionVersion_Question_CurrentVersionIdToQuestionVersion    QuestionVersion?         @relation("Question_CurrentVersionIdToQuestionVersion", fields: [CurrentVersionId], references: [VersionId], onDelete: NoAction, onUpdate: NoAction, map: "FK_Question_CurVer")
+  QuestionMarks                                                 QuestionMarks[]
+  QuestionRelation_QuestionRelation_QuestionIdToQuestion        QuestionRelation[]       @relation("QuestionRelation_QuestionIdToQuestion")
+  QuestionRelation_QuestionRelation_RelatedQuestionIdToQuestion QuestionRelation[]       @relation("QuestionRelation_RelatedQuestionIdToQuestion")
+  QuestionReport                                                QuestionReport[]
+  QuestionSearch                                                QuestionSearch[]
+  QuestionStat                                                  QuestionStat?
+  QuestionTag                                                   QuestionTag[]
+  QuestionVersion_QuestionVersion_QuestionIdToQuestion          QuestionVersion[]        @relation("QuestionVersion_QuestionIdToQuestion")
+  ReviewAction                                                  ReviewAction[]
+  StudentBookmark                                               StudentBookmark[]
+  StudentQuestionSeen                                           StudentQuestionSeen[]
+  TestPool                                                      TestPool[]
+  TestQuestion                                                  TestQuestion[]
+
+  @@index([CreatedBy, CreatedOn], map: "IX_Question_Creator", where: raw("([IsDeleted]=(0))"))
+  @@index([FranchiseId, Status, Difficulty], map: "IX_Question_Filter", where: raw("([IsDeleted]=(0))"))
+}
+
+model QuestionGroup {
+  GroupId                                                                   BigInt                   @id(map: "PK__Question__149AF36A28D7FF87") @default(autoincrement())
+  Status                                                                    Int                      @default(0, map: "DF__QuestionG__Statu__797309D9") @db.TinyInt
+  CurrentVersionId                                                          BigInt?
+  FranchiseId                                                               BigInt?
+  IsActive                                                                  Boolean                  @default(true, map: "DF__QuestionG__IsAct__7A672E12")
+  IsDeleted                                                                 Boolean                  @default(false, map: "DF__QuestionG__IsDel__7B5B524B")
+  CreatedBy                                                                 String                   @db.NVarChar(500)
+  CreatedOn                                                                 DateTime                 @default(now(), map: "DF__QuestionG__Creat__7C4F7684") @db.DateTime
+  CreatedIp                                                                 String?                  @db.NVarChar(50)
+  ModifiedBy                                                                String?                  @db.NVarChar(500)
+  ModifiedOn                                                                DateTime?                @db.DateTime
+  ModifiedIp                                                                String?                  @db.NVarChar(50)
+  RowVer                                                                    Unsupported("timestamp")
+  Question                                                                  Question[]
+  QuestionGroupVersion_QuestionGroup_CurrentVersionIdToQuestionGroupVersion QuestionGroupVersion?    @relation("QuestionGroup_CurrentVersionIdToQuestionGroupVersion", fields: [CurrentVersionId], references: [VersionId], onDelete: NoAction, onUpdate: NoAction, map: "FK_Group_CurVer")
+  QuestionGroupVersion_QuestionGroupVersion_GroupIdToQuestionGroup          QuestionGroupVersion[]   @relation("QuestionGroupVersion_GroupIdToQuestionGroup")
+}
+
+model QuestionGroupVersion {
+  VersionId                                                          BigInt          @id(map: "PK__Question__16C6400F3DE52693") @default(autoincrement())
+  GroupId                                                            BigInt
+  VersionNo                                                          Int
+  ContextJson                                                        String          @db.NVarChar(Max)
+  ChangeNote                                                         String?         @db.NVarChar(400)
+  FranchiseId                                                        BigInt?
+  IsActive                                                           Boolean         @default(true, map: "DF__QuestionG__IsAct__01142BA1")
+  IsDeleted                                                          Boolean         @default(false, map: "DF__QuestionG__IsDel__02084FDA")
+  CreatedBy                                                          String          @db.NVarChar(500)
+  CreatedOn                                                          DateTime        @default(now(), map: "DF__QuestionG__Creat__02FC7413") @db.DateTime
+  CreatedIp                                                          String?         @db.NVarChar(50)
+  ModifiedBy                                                         String?         @db.NVarChar(500)
+  ModifiedOn                                                         DateTime?       @db.DateTime
+  ModifiedIp                                                         String?         @db.NVarChar(50)
+  QuestionGroup_QuestionGroup_CurrentVersionIdToQuestionGroupVersion QuestionGroup[] @relation("QuestionGroup_CurrentVersionIdToQuestionGroupVersion")
+  QuestionGroup_QuestionGroupVersion_GroupIdToQuestionGroup          QuestionGroup   @relation("QuestionGroupVersion_GroupIdToQuestionGroup", fields: [GroupId], references: [GroupId], onUpdate: NoAction, map: "FK__QuestionG__Group__00200768")
+  TestPool                                                           TestPool[]
+  TestQuestion                                                       TestQuestion[]
+
+  @@unique([GroupId, VersionNo], map: "UQ_GroupVersion")
+}
+
+model QuestionMarks {
+  QuestionId    BigInt
+  PaperId       BigInt
+  Marks         Decimal   @db.Decimal(5, 2)
+  NegativeMarks Decimal   @default(0, map: "DF__QuestionM__Negat__3493CFA7") @db.Decimal(5, 2)
+  FranchiseId   BigInt?
+  IsActive      Boolean   @default(true, map: "DF__QuestionM__IsAct__3587F3E0")
+  IsDeleted     Boolean   @default(false, map: "DF__QuestionM__IsDel__367C1819")
+  CreatedBy     String    @db.NVarChar(500)
+  CreatedOn     DateTime  @default(now(), map: "DF__QuestionM__Creat__37703C52") @db.DateTime
+  CreatedIp     String?   @db.NVarChar(50)
+  ModifiedBy    String?   @db.NVarChar(500)
+  ModifiedOn    DateTime? @db.DateTime
+  ModifiedIp    String?   @db.NVarChar(50)
+  ExamPaper     ExamPaper @relation(fields: [PaperId], references: [PaperId], onUpdate: NoAction, map: "FK__QuestionM__Paper__339FAB6E")
+  Question      Question  @relation(fields: [QuestionId], references: [QuestionId], onUpdate: NoAction, map: "FK__QuestionM__Quest__32AB8735")
+
+  @@id([QuestionId, PaperId], map: "PK__Question__A7780E8C2DDD521A")
+}
+
+model QuestionRelation {
+  QuestionId                                            BigInt
+  RelatedQuestionId                                     BigInt
+  RelationType                                          Int       @db.TinyInt
+  Score                                                 Decimal?  @db.Decimal(4, 3)
+  FranchiseId                                           BigInt?
+  IsActive                                              Boolean   @default(true, map: "DF__QuestionR__IsAct__2739D489")
+  IsDeleted                                             Boolean   @default(false, map: "DF__QuestionR__IsDel__282DF8C2")
+  CreatedBy                                             String    @db.NVarChar(500)
+  CreatedOn                                             DateTime  @default(now(), map: "DF__QuestionR__Creat__29221CFB") @db.DateTime
+  CreatedIp                                             String?   @db.NVarChar(50)
+  ModifiedBy                                            String?   @db.NVarChar(500)
+  ModifiedOn                                            DateTime? @db.DateTime
+  ModifiedIp                                            String?   @db.NVarChar(50)
+  Question_QuestionRelation_QuestionIdToQuestion        Question  @relation("QuestionRelation_QuestionIdToQuestion", fields: [QuestionId], references: [QuestionId], onUpdate: NoAction, map: "FK__QuestionR__Quest__25518C17")
+  Question_QuestionRelation_RelatedQuestionIdToQuestion Question  @relation("QuestionRelation_RelatedQuestionIdToQuestion", fields: [RelatedQuestionId], references: [QuestionId], onUpdate: NoAction, map: "FK__QuestionR__Relat__2645B050")
+
+  @@id([QuestionId, RelatedQuestionId, RelationType], map: "PK__Question__77BFDD2EDAAA7B37")
+  @@index([RelatedQuestionId, RelationType], map: "IX_QRel_Reverse")
+}
+
+model QuestionReport {
+  ReportId        BigInt          @id(map: "PK__Question__D5BD4805780569DD") @default(autoincrement())
+  QuestionId      BigInt
+  VersionId       BigInt
+  Reason          Int             @db.TinyInt
+  Comment         String?
+  Status          Int             @default(0, map: "DF__QuestionR__Statu__29E1370A") @db.TinyInt
+  ResolvedBy      String?         @db.NVarChar(500)
+  ResolvedOn      DateTime?       @db.DateTime
+  FranchiseId     BigInt?
+  IsActive        Boolean         @default(true, map: "DF__QuestionR__IsAct__2AD55B43")
+  IsDeleted       Boolean         @default(false, map: "DF__QuestionR__IsDel__2BC97F7C")
+  CreatedBy       String          @db.NVarChar(500)
+  CreatedOn       DateTime        @default(now(), map: "DF__QuestionR__Creat__2CBDA3B5") @db.DateTime
+  CreatedIp       String?         @db.NVarChar(50)
+  ModifiedBy      String?         @db.NVarChar(500)
+  ModifiedOn      DateTime?       @db.DateTime
+  ModifiedIp      String?         @db.NVarChar(50)
+  Question        Question        @relation(fields: [QuestionId], references: [QuestionId], onUpdate: NoAction, map: "FK__QuestionR__Quest__27F8EE98")
+  QuestionVersion QuestionVersion @relation(fields: [VersionId], references: [VersionId], onUpdate: NoAction, map: "FK__QuestionR__Versi__28ED12D1")
+
+  @@index([Status, QuestionId], map: "IX_Report_Open", where: raw("([Status]=(0) AND [IsDeleted]=(0))"))
+}
+
+model QuestionSearch {
+  SearchId    BigInt    @id(map: "PK_QuestionSearch") @default(autoincrement())
+  QuestionId  BigInt
+  Locale      String    @db.VarChar(10)
+  SearchText  String    @db.NVarChar(Max)
+  FranchiseId BigInt?
+  IsActive    Boolean   @default(true, map: "DF__QuestionS__IsAct__3C34F16F")
+  IsDeleted   Boolean   @default(false, map: "DF__QuestionS__IsDel__3D2915A8")
+  CreatedBy   String    @db.NVarChar(500)
+  CreatedOn   DateTime  @default(now(), map: "DF__QuestionS__Creat__3E1D39E1") @db.DateTime
+  CreatedIp   String?   @db.NVarChar(50)
+  ModifiedBy  String?   @db.NVarChar(500)
+  ModifiedOn  DateTime? @db.DateTime
+  ModifiedIp  String?   @db.NVarChar(50)
+  Question    Question  @relation(fields: [QuestionId], references: [QuestionId], onUpdate: NoAction, map: "FK__QuestionS__Quest__3B40CD36")
+
+  @@unique([QuestionId, Locale], map: "UQ_QuestionSearch")
+}
+
+model QuestionStat {
+  QuestionId          BigInt    @id(map: "PK__Question__0DC06FAC99424C1B")
+  AttemptCount        Int       @default(0, map: "DF__QuestionS__Attem__308E3499")
+  CorrectCount        Int       @default(0, map: "DF__QuestionS__Corre__318258D2")
+  WrongCount          Int       @default(0, map: "DF__QuestionS__Wrong__32767D0B")
+  SkipCount           Int       @default(0, map: "DF__QuestionS__SkipC__336AA144")
+  AvgTimeSec          Decimal?  @db.Decimal(7, 2)
+  PValue              Decimal?  @db.Decimal(5, 4)
+  DiscriminationIndex Decimal?  @db.Decimal(5, 4)
+  ExposureCount       Int       @default(0, map: "DF__QuestionS__Expos__345EC57D")
+  LastUsedOn          DateTime? @db.DateTime
+  BookmarkCount       Int       @default(0, map: "DF__QuestionS__Bookm__3552E9B6")
+  ReportCount         Int       @default(0, map: "DF__QuestionS__Repor__36470DEF")
+  TeacherRating       Decimal?  @db.Decimal(3, 2)
+  StudentRating       Decimal?  @db.Decimal(3, 2)
+  FranchiseId         BigInt?
+  IsActive            Boolean   @default(true, map: "DF__QuestionS__IsAct__373B3228")
+  IsDeleted           Boolean   @default(false, map: "DF__QuestionS__IsDel__382F5661")
+  CreatedBy           String    @db.NVarChar(500)
+  CreatedOn           DateTime  @default(now(), map: "DF__QuestionS__Creat__39237A9A") @db.DateTime
+  CreatedIp           String?   @db.NVarChar(50)
+  ModifiedBy          String?   @db.NVarChar(500)
+  ModifiedOn          DateTime? @db.DateTime
+  ModifiedIp          String?   @db.NVarChar(50)
+  Question            Question  @relation(fields: [QuestionId], references: [QuestionId], onUpdate: NoAction, map: "FK__QuestionS__Quest__2F9A1060")
+
+  @@index([PValue, DiscriminationIndex], map: "IX_QStat_Quality")
+  @@index([ExposureCount, LastUsedOn], map: "IX_QStat_Usage")
+}
+
+model QuestionTag {
+  TagId       BigInt
+  QuestionId  BigInt
+  FranchiseId BigInt?
+  IsActive    Boolean   @default(true, map: "DF__QuestionT__IsAct__208CD6FA")
+  IsDeleted   Boolean   @default(false, map: "DF__QuestionT__IsDel__2180FB33")
+  CreatedBy   String    @db.NVarChar(500)
+  CreatedOn   DateTime  @default(now(), map: "DF__QuestionT__Creat__22751F6C") @db.DateTime
+  CreatedIp   String?   @db.NVarChar(50)
+  ModifiedBy  String?   @db.NVarChar(500)
+  ModifiedOn  DateTime? @db.DateTime
+  ModifiedIp  String?   @db.NVarChar(50)
+  Question    Question  @relation(fields: [QuestionId], references: [QuestionId], onUpdate: NoAction, map: "FK__QuestionT__Quest__1F98B2C1")
+  Tag         Tag       @relation(fields: [TagId], references: [TagId], onUpdate: NoAction, map: "FK__QuestionT__TagId__1EA48E88")
+
+  @@id([TagId, QuestionId], map: "PK_QuestionTag")
+  @@index([QuestionId], map: "IX_QuestionTag_ByQ")
+}
+
+model QuestionType {
+  QuestionTypeId     Int        @id(map: "PK__Question__7EDFF9316E68ACE8") @default(autoincrement())
+  Code               String     @unique(map: "UQ__Question__A25C5AA79C55BE98") @db.VarChar(50)
+  Name               String     @db.NVarChar(100)
+  PresentationSchema String     @db.NVarChar(Max)
+  AnswerSchema       String     @db.NVarChar(Max)
+  ShuffleDefault     Boolean    @default(true, map: "DF__QuestionT__Shuff__72C60C4A")
+  IsAutoGradable     Boolean    @default(true, map: "DF__QuestionT__IsAut__73BA3083")
+  FranchiseId        BigInt?
+  IsActive           Boolean    @default(true, map: "DF__QuestionT__IsAct__74AE54BC")
+  IsDeleted          Boolean    @default(false, map: "DF__QuestionT__IsDel__75A278F5")
+  CreatedBy          String     @db.NVarChar(500)
+  CreatedOn          DateTime   @default(now(), map: "DF__QuestionT__Creat__76969D2E") @db.DateTime
+  CreatedIp          String?    @db.NVarChar(50)
+  ModifiedBy         String?    @db.NVarChar(500)
+  ModifiedOn         DateTime?  @db.DateTime
+  ModifiedIp         String?    @db.NVarChar(50)
+  Question           Question[]
+}
+
+model QuestionVersion {
+  VersionId                                           BigInt                       @id(map: "PK__Question__16C6400F6A7E463D") @default(autoincrement())
+  QuestionId                                          BigInt
+  VersionNo                                           Int
+  Locale                                              String                       @default("en", map: "DF__QuestionV__Local__123EB7A3") @db.VarChar(10)
+  PresentationJson                                    String                       @db.NVarChar(Max)
+  AnswerJson                                          String                       @db.NVarChar(Max)
+  MetaJson                                            String?                      @db.NVarChar(Max)
+  ContentHash                                         String                       @db.Char(64)
+  SimHash                                             BigInt?
+  ChangeNote                                          String?                      @db.NVarChar(400)
+  FranchiseId                                         BigInt?
+  IsActive                                            Boolean                      @default(true, map: "DF__QuestionV__IsAct__1332DBDC")
+  IsDeleted                                           Boolean                      @default(false, map: "DF__QuestionV__IsDel__14270015")
+  CreatedBy                                           String                       @db.NVarChar(500)
+  CreatedOn                                           DateTime                     @default(now(), map: "DF__QuestionV__Creat__151B244E") @db.DateTime
+  CreatedIp                                           String?                      @db.NVarChar(50)
+  ModifiedBy                                          String?                      @db.NVarChar(500)
+  ModifiedOn                                          DateTime?                    @db.DateTime
+  ModifiedIp                                          String?                      @db.NVarChar(50)
+  AttemptAnswer                                       AttemptAnswer[]
+  Question_Question_CurrentVersionIdToQuestionVersion Question[]                   @relation("Question_CurrentVersionIdToQuestionVersion")
+  QuestionReport                                      QuestionReport[]
+  Question_QuestionVersion_QuestionIdToQuestion       Question                     @relation("QuestionVersion_QuestionIdToQuestion", fields: [QuestionId], references: [QuestionId], onUpdate: NoAction, map: "FK__QuestionV__Quest__114A936A")
+  QuestionVersionTranslation                          QuestionVersionTranslation[]
+  ReviewAction                                        ReviewAction[]
+  TestPool                                            TestPool[]
+  TestQuestion                                        TestQuestion[]
+
+  @@unique([QuestionId, VersionNo], map: "UQ_QuestionVersion")
+  @@index([ContentHash], map: "IX_QVersion_Hash")
+}
+
+model QuestionVersionTranslation {
+  VersionId        BigInt
+  Locale           String          @db.VarChar(10)
+  PresentationJson String          @db.NVarChar(Max)
+  ExplanationJson  String?         @db.NVarChar(Max)
+  FranchiseId      BigInt?
+  IsActive         Boolean         @default(true, map: "DF__QuestionV__IsAct__19DFD96B")
+  IsDeleted        Boolean         @default(false, map: "DF__QuestionV__IsDel__1AD3FDA4")
+  CreatedBy        String          @db.NVarChar(500)
+  CreatedOn        DateTime        @default(now(), map: "DF__QuestionV__Creat__1BC821DD") @db.DateTime
+  CreatedIp        String?         @db.NVarChar(50)
+  ModifiedBy       String?         @db.NVarChar(500)
+  ModifiedOn       DateTime?       @db.DateTime
+  ModifiedIp       String?         @db.NVarChar(50)
+  QuestionVersion  QuestionVersion @relation(fields: [VersionId], references: [VersionId], onUpdate: NoAction, map: "FK__QuestionV__Versi__18EBB532")
+
+  @@id([VersionId, Locale], map: "PK__Question__D8A10F46F7A36EF0")
+}
+
+model ReviewAction {
+  ReviewId        BigInt          @id(map: "PK__ReviewAc__74BC79CEECA452FB") @default(autoincrement())
+  QuestionId      BigInt
+  VersionId       BigInt
+  FromStatus      Int             @db.TinyInt
+  ToStatus        Int             @db.TinyInt
+  Comment         String?
+  FranchiseId     BigInt?
+  IsActive        Boolean         @default(true, map: "DF__ReviewAct__IsAct__2DE6D218")
+  IsDeleted       Boolean         @default(false, map: "DF__ReviewAct__IsDel__2EDAF651")
+  CreatedBy       String          @db.NVarChar(500)
+  CreatedOn       DateTime        @default(now(), map: "DF__ReviewAct__Creat__2FCF1A8A") @db.DateTime
+  CreatedIp       String?         @db.NVarChar(50)
+  ModifiedBy      String?         @db.NVarChar(500)
+  ModifiedOn      DateTime?       @db.DateTime
+  ModifiedIp      String?         @db.NVarChar(50)
+  Question        Question        @relation(fields: [QuestionId], references: [QuestionId], onUpdate: NoAction, map: "FK__ReviewAct__Quest__2BFE89A6")
+  QuestionVersion QuestionVersion @relation(fields: [VersionId], references: [VersionId], onUpdate: NoAction, map: "FK__ReviewAct__Versi__2CF2ADDF")
+
+  @@index([QuestionId, CreatedOn], map: "IX_Review_Question")
+}
+
+model StudentBookmark {
+  StudentId   String    @db.NVarChar(500)
+  QuestionId  BigInt
+  Kind        Int       @db.TinyInt
+  Note        String?
+  FranchiseId BigInt?
+  IsActive    Boolean   @default(true, map: "DF__StudentBo__IsAct__14E61A24")
+  IsDeleted   Boolean   @default(false, map: "DF__StudentBo__IsDel__15DA3E5D")
+  CreatedBy   String    @db.NVarChar(500)
+  CreatedOn   DateTime  @default(now(), map: "DF__StudentBo__Creat__16CE6296") @db.DateTime
+  CreatedIp   String?   @db.NVarChar(50)
+  ModifiedBy  String?   @db.NVarChar(500)
+  ModifiedOn  DateTime? @db.DateTime
+  ModifiedIp  String?   @db.NVarChar(50)
+  Question    Question  @relation(fields: [QuestionId], references: [QuestionId], onUpdate: NoAction, map: "FK__StudentBo__Quest__13F1F5EB")
+
+  @@id([StudentId, QuestionId, Kind], map: "PK__StudentB__BB6EDDC1B31B4135")
+}
+
+model StudentQuestionSeen {
+  StudentId    String    @db.NVarChar(500)
+  QuestionId   BigInt
+  TimesSeen    Int       @default(1, map: "DF__StudentQu__Times__1A9EF37A") @db.SmallInt
+  TimesCorrect Int       @default(0, map: "DF__StudentQu__Times__1B9317B3") @db.SmallInt
+  LastResult   Int?      @db.TinyInt
+  LastSeenOn   DateTime  @db.DateTime
+  FranchiseId  BigInt?
+  IsActive     Boolean   @default(true, map: "DF__StudentQu__IsAct__1C873BEC")
+  IsDeleted    Boolean   @default(false, map: "DF__StudentQu__IsDel__1D7B6025")
+  CreatedBy    String    @db.NVarChar(500)
+  CreatedOn    DateTime  @default(now(), map: "DF__StudentQu__Creat__1E6F845E") @db.DateTime
+  CreatedIp    String?   @db.NVarChar(50)
+  ModifiedBy   String?   @db.NVarChar(500)
+  ModifiedOn   DateTime? @db.DateTime
+  ModifiedIp   String?   @db.NVarChar(50)
+  Question     Question  @relation(fields: [QuestionId], references: [QuestionId], onUpdate: NoAction, map: "FK__StudentQu__Quest__19AACF41")
+
+  @@id([StudentId, QuestionId], map: "PK__StudentQ__E2192D63719F4205")
+}
+
+model StudentTopicMastery {
+  StudentId    String    @db.NVarChar(500)
+  TagId        BigInt
+  AttemptCount Int       @default(0, map: "DF__StudentTo__Attem__22401542")
+  CorrectRate  Decimal?  @db.Decimal(5, 4)
+  MasteryScore Decimal?  @db.Decimal(5, 4)
+  FranchiseId  BigInt?
+  IsActive     Boolean   @default(true, map: "DF__StudentTo__IsAct__2334397B")
+  IsDeleted    Boolean   @default(false, map: "DF__StudentTo__IsDel__24285DB4")
+  CreatedBy    String    @db.NVarChar(500)
+  CreatedOn    DateTime  @default(now(), map: "DF__StudentTo__Creat__251C81ED") @db.DateTime
+  CreatedIp    String?   @db.NVarChar(50)
+  ModifiedBy   String?   @db.NVarChar(500)
+  ModifiedOn   DateTime? @db.DateTime
+  ModifiedIp   String?   @db.NVarChar(50)
+  Tag          Tag       @relation(fields: [TagId], references: [TagId], onUpdate: NoAction, map: "FK__StudentTo__TagId__214BF109")
+
+  @@id([StudentId, TagId], map: "PK__StudentT__E492E403C32A80D3")
+}
+
+model Tag {
+  TagId               BigInt                   @id(map: "PK__Tag__657CF9ACD5DC9C7A") @default(autoincrement())
+  DimensionId         Int
+  ParentTagId         BigInt?
+  RefStageId          BigInt?
+  Name                String                   @db.NVarChar(200)
+  FranchiseId         BigInt?
+  IsActive            Boolean                  @default(true, map: "DF__Tag__IsActive__6D0D32F4")
+  IsDeleted           Boolean                  @default(false, map: "DF__Tag__IsDeleted__6E01572D")
+  CreatedBy           String                   @db.NVarChar(500)
+  CreatedOn           DateTime                 @default(now(), map: "DF__Tag__CreatedOn__6EF57B66") @db.DateTime
+  CreatedIp           String?                  @db.NVarChar(50)
+  ModifiedBy          String?                  @db.NVarChar(500)
+  ModifiedOn          DateTime?                @db.DateTime
+  ModifiedIp          String?                  @db.NVarChar(50)
+  RowVer              Unsupported("timestamp")
+  QuestionTag         QuestionTag[]
+  StudentTopicMastery StudentTopicMastery[]
+  TagDimension        TagDimension             @relation(fields: [DimensionId], references: [DimensionId], onUpdate: NoAction, map: "FK__Tag__DimensionId__6A30C649")
+  Tag                 Tag?                     @relation("TagToTag", fields: [ParentTagId], references: [TagId], onDelete: NoAction, onUpdate: NoAction, map: "FK__Tag__ParentTagId__6B24EA82")
+  other_Tag           Tag[]                    @relation("TagToTag")
+  ExamStage           ExamStage?               @relation(fields: [RefStageId], references: [StageId], onDelete: NoAction, onUpdate: NoAction, map: "FK__Tag__RefStageId__6C190EBB")
+
+  @@index([DimensionId, FranchiseId, Name], map: "IX_Tag_Dim", where: raw("([IsDeleted]=(0))"))
+  @@index([ParentTagId], map: "IX_Tag_Parent", where: raw("([IsDeleted]=(0))"))
+}
+
+model TagDimension {
+  DimensionId    Int       @id(map: "PK__TagDimen__1F7D4F11D2101924") @default(autoincrement())
+  Code           String    @unique(map: "UQ__TagDimen__A25C5AA72BB7DAA3") @db.VarChar(50)
+  Name           String    @db.NVarChar(100)
+  IsHierarchical Boolean   @default(false, map: "DF__TagDimens__IsHie__6477ECF3")
+  FranchiseId    BigInt?
+  IsActive       Boolean   @default(true, map: "DF__TagDimens__IsAct__656C112C")
+  IsDeleted      Boolean   @default(false, map: "DF__TagDimens__IsDel__66603565")
+  CreatedBy      String    @db.NVarChar(500)
+  CreatedOn      DateTime  @default(now(), map: "DF__TagDimens__Creat__6754599E") @db.DateTime
+  CreatedIp      String?   @db.NVarChar(50)
+  ModifiedBy     String?   @db.NVarChar(500)
+  ModifiedOn     DateTime? @db.DateTime
+  ModifiedIp     String?   @db.NVarChar(50)
+  Tag            Tag[]
+}
+
+model TestKind {
+  TestKindId  Int        @id(map: "PK__TestKind__97B762777E685009") @db.TinyInt
+  Code        String     @unique(map: "UQ__TestKind__A25C5AA70E6A5090") @db.VarChar(40)
+  Name        String     @db.NVarChar(100)
+  FranchiseId BigInt?
+  IsActive    Boolean    @default(true, map: "DF__TestKind__IsActi__47A6A41B")
+  IsDeleted   Boolean    @default(false, map: "DF__TestKind__IsDele__489AC854")
+  CreatedBy   String     @db.NVarChar(500)
+  CreatedOn   DateTime   @default(now(), map: "DF__TestKind__Create__498EEC8D") @db.DateTime
+  CreatedIp   String?    @db.NVarChar(50)
+  ModifiedBy  String?    @db.NVarChar(500)
+  ModifiedOn  DateTime?  @db.DateTime
+  ModifiedIp  String?    @db.NVarChar(50)
+  MockTest    MockTest[]
+}
+
+model TestPool {
+  MockTestId           BigInt
+  SectionId            BigInt
+  QuestionId           BigInt
+  VersionId            BigInt
+  GroupVersionId       BigInt?
+  IsMandatory          Boolean               @default(false, map: "DF__TestPool__IsMand__5F7E2DAC")
+  FranchiseId          BigInt?
+  IsActive             Boolean               @default(true, map: "DF__TestPool__IsActi__607251E5")
+  IsDeleted            Boolean               @default(false, map: "DF__TestPool__IsDele__6166761E")
+  CreatedBy            String                @db.NVarChar(500)
+  CreatedOn            DateTime              @default(now(), map: "DF__TestPool__Create__625A9A57") @db.DateTime
+  CreatedIp            String?               @db.NVarChar(50)
+  ModifiedBy           String?               @db.NVarChar(500)
+  ModifiedOn           DateTime?             @db.DateTime
+  ModifiedIp           String?               @db.NVarChar(50)
+  QuestionGroupVersion QuestionGroupVersion? @relation(fields: [GroupVersionId], references: [VersionId], onDelete: NoAction, onUpdate: NoAction, map: "FK__TestPool__GroupV__5E8A0973")
+  MockTest             MockTest              @relation(fields: [MockTestId], references: [MockTestId], onUpdate: NoAction, map: "FK__TestPool__MockTe__5AB9788F")
+  Question             Question              @relation(fields: [QuestionId], references: [QuestionId], onUpdate: NoAction, map: "FK__TestPool__Questi__5CA1C101")
+  PaperSection         PaperSection          @relation(fields: [SectionId], references: [SectionId], onUpdate: NoAction, map: "FK__TestPool__Sectio__5BAD9CC8")
+  QuestionVersion      QuestionVersion       @relation(fields: [VersionId], references: [VersionId], onUpdate: NoAction, map: "FK__TestPool__Versio__5D95E53A")
+
+  @@id([MockTestId, SectionId, QuestionId], map: "PK__TestPool__939D4843C87CD612")
+  @@index([QuestionId], map: "IX_TestPool_Question")
+}
+
+model TestQuestion {
+  MockTestId           BigInt
+  SectionId            BigInt
+  SeqNo                Int
+  QuestionId           BigInt
+  VersionId            BigInt
+  GroupVersionId       BigInt?
+  EffectiveMarks       Decimal               @db.Decimal(5, 2)
+  EffectiveNegative    Decimal               @default(0, map: "DF__TestQuest__Effec__69FBBC1F") @db.Decimal(5, 2)
+  IsOptional           Boolean               @default(false, map: "DF__TestQuest__IsOpt__6AEFE058")
+  FranchiseId          BigInt?
+  IsActive             Boolean               @default(true, map: "DF__TestQuest__IsAct__6BE40491")
+  IsDeleted            Boolean               @default(false, map: "DF__TestQuest__IsDel__6CD828CA")
+  CreatedBy            String                @db.NVarChar(500)
+  CreatedOn            DateTime              @default(now(), map: "DF__TestQuest__Creat__6DCC4D03") @db.DateTime
+  CreatedIp            String?               @db.NVarChar(50)
+  ModifiedBy           String?               @db.NVarChar(500)
+  ModifiedOn           DateTime?             @db.DateTime
+  ModifiedIp           String?               @db.NVarChar(50)
+  QuestionGroupVersion QuestionGroupVersion? @relation(fields: [GroupVersionId], references: [VersionId], onDelete: NoAction, onUpdate: NoAction, map: "FK__TestQuest__Group__690797E6")
+  MockTest             MockTest              @relation(fields: [MockTestId], references: [MockTestId], onUpdate: NoAction, map: "FK__TestQuest__MockT__65370702")
+  Question             Question              @relation(fields: [QuestionId], references: [QuestionId], onUpdate: NoAction, map: "FK__TestQuest__Quest__671F4F74")
+  PaperSection         PaperSection          @relation(fields: [SectionId], references: [SectionId], onUpdate: NoAction, map: "FK__TestQuest__Secti__662B2B3B")
+  QuestionVersion      QuestionVersion       @relation(fields: [VersionId], references: [VersionId], onUpdate: NoAction, map: "FK__TestQuest__Versi__681373AD")
+
+  @@id([MockTestId, SectionId, SeqNo], map: "PK__TestQues__B2EA73D8F86B7110")
+  @@index([QuestionId], map: "IX_TestQuestion_Q")
+}
