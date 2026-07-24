@@ -1,36 +1,26 @@
 "use client";
 
 import { useMemo } from "react";
+import { InputPicker } from "rsuite";
 import type { ReferenceData, TagPair } from "@/app/lib/questionSchema";
-import { inputClass, buttonClass } from "@/app/components/ui";
+import { buttonClass } from "@/app/components/ui";
 
-export const DIMENSION_DATALIST_ID = "tag-dimension-keys";
-
-export function TagDimensionDatalist({ dimensions }: { dimensions: ReferenceData["dimensions"] }) {
-  return (
-    <datalist id={DIMENSION_DATALIST_ID}>
-      {dimensions.map((d) => (
-        <option key={d.id} value={d.name} />
-      ))}
-    </datalist>
-  );
-}
+type Option = { label: string; value: string };
 
 // Dynamic key/value tag input. `key` is a tag dimension (e.g. "subject"),
-// `value` is a tag name within that dimension (e.g. "Reasoning"). Both are
-// free-text with autocomplete: pick an existing one, or type something new
-// and it gets created automatically on save.
+// `value` is a tag name within that dimension (e.g. "Reasoning"). Both use a
+// searchable combobox — matching the tag filter on the browse page — that
+// also lets you type something new: pick an existing option, or type a name
+// that doesn't exist yet and it gets created automatically on save.
 export function TagPairEditor({
   tags,
   referenceData,
-  idPrefix,
   onUpdate,
   onAdd,
   onRemove,
 }: {
   tags: TagPair[];
   referenceData: ReferenceData;
-  idPrefix: string;
   onUpdate: (index: number, patch: Partial<TagPair>) => void;
   onAdd: () => void;
   onRemove: (index: number) => void;
@@ -41,42 +31,47 @@ export function TagPairEditor({
     return map;
   }, [referenceData.dimensions]);
 
+  const dimensionOptions: Option[] = useMemo(
+    () => referenceData.dimensions.map((d) => ({ label: d.name, value: d.name })),
+    [referenceData.dimensions]
+  );
+
   return (
     <div className="flex flex-col gap-2">
       {tags.map((tag, i) => {
         const matchedDim = dimensionByLowerName.get(tag.key.trim().toLowerCase());
-        const valueOptions = matchedDim
-          ? referenceData.tagsByDimensionId[matchedDim.id] ?? []
+        const valueOptions: Option[] = matchedDim
+          ? (referenceData.tagsByDimensionId[matchedDim.id] ?? []).map((v) => ({ label: v.name, value: v.name }))
           : [];
-        const valueListId = `${idPrefix}-tagval-${i}`;
-        const isNewKey = tag.key.trim() && !matchedDim;
+        const isNewKey = !!tag.key.trim() && !matchedDim;
         const isNewValue =
-          tag.value.trim() &&
-          matchedDim &&
-          !valueOptions.some((v) => v.name.toLowerCase() === tag.value.trim().toLowerCase());
+          !!tag.value.trim() &&
+          !!matchedDim &&
+          !valueOptions.some((v) => v.value.toLowerCase() === tag.value.trim().toLowerCase());
 
         return (
           <div key={i} className="flex flex-wrap items-center gap-1.5">
-            <input
-              className={`${inputClass} min-w-26 flex-1 basis-24`}
-              list={DIMENSION_DATALIST_ID}
-              value={tag.key}
-              onChange={(e) => onUpdate(i, { key: e.target.value })}
+            <InputPicker
+              data={dimensionOptions}
+              value={tag.key || null}
+              onChange={(v) => onUpdate(i, { key: v ?? "" })}
+              creatable
+              cleanable
+              size="sm"
               placeholder="key"
+              className="min-w-26 flex-1 basis-24"
             />
             <span className="shrink-0 text-zinc-400">→</span>
-            <input
-              className={`${inputClass} min-w-28 flex-2 basis-32`}
-              list={valueListId}
-              value={tag.value}
-              onChange={(e) => onUpdate(i, { value: e.target.value })}
+            <InputPicker
+              data={valueOptions}
+              value={tag.value || null}
+              onChange={(v) => onUpdate(i, { value: v ?? "" })}
+              creatable
+              cleanable
+              size="sm"
               placeholder="value"
+              className="min-w-28 flex-2 basis-32"
             />
-            <datalist id={valueListId}>
-              {valueOptions.map((v) => (
-                <option key={v.id} value={v.name} />
-              ))}
-            </datalist>
             {(isNewKey || isNewValue) && (
               <span
                 className="shrink-0 whitespace-nowrap rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-800"

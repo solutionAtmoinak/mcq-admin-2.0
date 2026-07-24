@@ -31,9 +31,9 @@ export default function RootLayout({
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="flex min-h-full flex-col bg-zinc-50">
+      <body className="flex min-h-full bg-zinc-50">
         <NavBar />
-        <main className="flex flex-1 flex-col">{children}</main>
+        <main className="flex min-w-0 flex-1 flex-col">{children}</main>
         <ToastContainer position="top-right" autoClose={4000} newestOnTop />
       </body>
     </html>

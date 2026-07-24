@@ -12,7 +12,7 @@ import {
   type ReferenceData,
   type TagPair,
 } from "@/app/lib/questionSchema";
-import { TagPairEditor, TagDimensionDatalist } from "@/app/components/TagPairEditor";
+import { TagPairEditor } from "@/app/components/TagPairEditor";
 import StatusChanger from "@/app/components/StatusChanger";
 import { AppSelectPicker } from "@/app/components/AppSelectPicker";
 import {
@@ -33,11 +33,13 @@ export default function QuestionEditForm({
   currentStatus,
   initialInput,
   referenceData,
+  lotNo,
 }: {
   questionId: string;
   currentStatus: number;
   initialInput: QuestionInput;
   referenceData: ReferenceData;
+  lotNo: string | null;
 }) {
   const router = useRouter();
   const [data, setData] = useState<QuestionInput>(initialInput);
@@ -144,8 +146,6 @@ export default function QuestionEditForm({
 
   return (
     <div className="flex flex-col gap-6">
-      <TagDimensionDatalist dimensions={referenceData.dimensions} />
-
       {error && (
         <div className="rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-800">
           {error}
@@ -314,7 +314,6 @@ export default function QuestionEditForm({
             <TagPairEditor
               tags={data.tags}
               referenceData={referenceData}
-              idPrefix="edit"
               onUpdate={updateTag}
               onAdd={addTag}
               onRemove={removeTag}
@@ -327,6 +326,15 @@ export default function QuestionEditForm({
               <div>
                 <label className={labelClass}>Code</label>
                 <input className={`${inputClass} opacity-60`} value={data.code} disabled title="Code cannot be changed" />
+              </div>
+              <div>
+                <label className={labelClass}>Lot number</label>
+                <input
+                  className={`${inputClass} font-mono opacity-60`}
+                  value={lotNo ?? "—"}
+                  disabled
+                  title="The batch this question was created in"
+                />
               </div>
               <div>
                 <label className={labelClass}>Change note (optional)</label>

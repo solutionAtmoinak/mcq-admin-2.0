@@ -359,6 +359,7 @@ model Question {
   EstSolveSec                                                   Int?                     @db.SmallInt
   GroupId                                                       BigInt?
   GroupSeq                                                      Int?
+  LotId                                                         BigInt?
   CurrentVersionId                                              BigInt?
   ApprovedBy                                                    String?                  @db.NVarChar(500)
   ApprovedOn                                                    DateTime?                @db.DateTime
@@ -375,6 +376,7 @@ model Question {
   AttemptAnswer                                                 AttemptAnswer[]
   AttemptEvent                                                  AttemptEvent[]
   QuestionGroup                                                 QuestionGroup?           @relation(fields: [GroupId], references: [GroupId], onDelete: NoAction, onUpdate: NoAction, map: "FK__Question__GroupI__09A971A2")
+  QuestionLot                                                   QuestionLot?             @relation(fields: [LotId], references: [LotId], onDelete: NoAction, onUpdate: NoAction, map: "FK__Question__LotId")
   QuestionType                                                  QuestionType             @relation(fields: [QuestionTypeId], references: [QuestionTypeId], onUpdate: NoAction, map: "FK__Question__Questi__07C12930")
   QuestionVersion_Question_CurrentVersionIdToQuestionVersion    QuestionVersion?         @relation("Question_CurrentVersionIdToQuestionVersion", fields: [CurrentVersionId], references: [VersionId], onDelete: NoAction, onUpdate: NoAction, map: "FK_Question_CurVer")
   QuestionMarks                                                 QuestionMarks[]
@@ -393,6 +395,7 @@ model Question {
 
   @@index([CreatedBy, CreatedOn], map: "IX_Question_Creator", where: raw("([IsDeleted]=(0))"))
   @@index([FranchiseId, Status, Difficulty], map: "IX_Question_Filter", where: raw("([IsDeleted]=(0))"))
+  @@index([LotId], map: "IX_Question_Lot", where: raw("([IsDeleted]=(0))"))
 }
 
 model QuestionGroup {
@@ -435,6 +438,27 @@ model QuestionGroupVersion {
   TestQuestion                                                       TestQuestion[]
 
   @@unique([GroupId, VersionNo], map: "UQ_GroupVersion")
+}
+
+// One row per question-creation session in the "Create Questions" UI. LotNo
+// is generated server-side the moment that page is opened (see
+// createQuestionLot in actions.ts) and every question saved during that
+// browser-tab session — whether via "Save All" or an individual row save —
+// is stamped with the same LotId, so a batch of questions authored together
+// can be found/reused as a group later (e.g. from Batch Default Settings).
+model QuestionLot {
+  LotId       BigInt     @id(map: "PK__QuestionLot") @default(autoincrement())
+  LotNo       String     @unique(map: "UQ_QuestionLot_LotNo") @db.VarChar(50)
+  FranchiseId BigInt?
+  IsActive    Boolean    @default(true, map: "DF__QuestionL__IsAct__LotAct")
+  IsDeleted   Boolean    @default(false, map: "DF__QuestionL__IsDel__LotDel")
+  CreatedBy   String     @db.NVarChar(500)
+  CreatedOn   DateTime   @default(now(), map: "DF__QuestionL__Creat__LotCreat") @db.DateTime
+  CreatedIp   String?    @db.NVarChar(50)
+  ModifiedBy  String?    @db.NVarChar(500)
+  ModifiedOn  DateTime?  @db.DateTime
+  ModifiedIp  String?    @db.NVarChar(50)
+  Question    Question[]
 }
 
 model QuestionMarks {

@@ -22,6 +22,10 @@ export type CreateQuestionsResult =
   | { ok: true; created: { code: string; questionId: string }[] }
   | { ok: false; error: string };
 
+export type CreateQuestionLotResult =
+  | { ok: true; lotId: string; lotNo: string }
+  | { ok: false; error: string };
+
 export type UpdateQuestionResult = { ok: true } | { ok: false; error: string };
 
 export type ChangeStatusResult = { ok: true } | { ok: false; error: string };
@@ -32,6 +36,38 @@ function generateCode(typeCode: string): string {
   const prefix = typeCode.slice(0, 3).toUpperCase();
   const rand = crypto.randomBytes(4).toString("hex").toUpperCase();
   return `Q-${prefix}-${rand}`;
+}
+
+function generateLotNo(): string {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, "0");
+  const d = String(now.getDate()).padStart(2, "0");
+  const rand = crypto.randomBytes(4).toString("hex").toUpperCase();
+  return `LOT-${y}${m}${d}-${rand}`;
+}
+
+// Mints a new lot the moment the Create Questions page loads (see
+// QuestionBankEditor's initial state). Every question saved afterwards during
+// that same browser-tab session — one row at a time or via "Save All" — is
+// tagged with this lot's id, so the whole batch can be found/reused as a
+// group later (surfaced read-only in Batch Default Settings).
+export async function createQuestionLot(): Promise<CreateQuestionLotResult> {
+  const ATTEMPTS = 5;
+  for (let i = 0; i < ATTEMPTS; i++) {
+    const lotNo = generateLotNo();
+    try {
+      const lot = await prisma.questionLot.create({
+        data: { LotNo: lotNo, CreatedBy: CURRENT_USER_ID },
+      });
+      return { ok: true, lotId: lot.LotId.toString(), lotNo: lot.LotNo };
+    } catch {
+      // Collision on the unique LotNo constraint — retry with a fresh
+      // random suffix. Astronomically unlikely (32 bits of randomness per
+      // day), so a handful of attempts is more than enough headroom.
+    }
+  }
+  return { ok: false, error: "Could not generate a unique lot number. Please try again." };
 }
 
 // Tag dimension `Code` is a unique, DB-friendly slug derived from whatever
@@ -145,12 +181,24 @@ function resolveQuestionTagIds(tags: TagPair[], tagIdByPairKey: Map<string, bigi
   return tagIds;
 }
 
-export async function createQuestions(inputs: QuestionInput[]): Promise<CreateQuestionsResult> {
+export async function createQuestions(
+  inputs: QuestionInput[],
+  lotId?: string | null
+): Promise<CreateQuestionsResult> {
   if (!inputs || inputs.length === 0) {
     return { ok: false, error: "No questions to create." };
   }
   if (inputs.length > 200) {
     return { ok: false, error: "Please submit 200 questions or fewer at a time." };
+  }
+
+  let lotIdBigInt: bigint | null = null;
+  if (lotId) {
+    try {
+      lotIdBigInt = BigInt(lotId);
+    } catch {
+      return { ok: false, error: "Invalid lot id." };
+    }
   }
 
   for (const [i, q] of inputs.entries()) {
@@ -196,14 +244,14 @@ export async function createQuestions(inputs: QuestionInput[]): Promise<CreateQu
       const isApproved = q.status === QUESTION_STATUS.APPROVED;
       const insertedRows = isApproved
         ? await tx.$queryRaw<{ QuestionId: bigint }[]>(
-            Prisma.sql`INSERT INTO dbo.Question (Code, QuestionTypeId, Difficulty, Status, EstSolveSec, ApprovedBy, ApprovedOn, CreatedBy)
+            Prisma.sql`INSERT INTO dbo.Question (Code, QuestionTypeId, Difficulty, Status, EstSolveSec, LotId, ApprovedBy, ApprovedOn, CreatedBy)
               OUTPUT INSERTED.QuestionId
-              VALUES (${code}, ${type.QuestionTypeId}, ${q.difficulty}, ${q.status}, ${q.estSolveSec ?? null}, ${CURRENT_USER_ID}, GETDATE(), ${CURRENT_USER_ID})`
+              VALUES (${code}, ${type.QuestionTypeId}, ${q.difficulty}, ${q.status}, ${q.estSolveSec ?? null}, ${lotIdBigInt}, ${CURRENT_USER_ID}, GETDATE(), ${CURRENT_USER_ID})`
           )
         : await tx.$queryRaw<{ QuestionId: bigint }[]>(
-            Prisma.sql`INSERT INTO dbo.Question (Code, QuestionTypeId, Difficulty, Status, EstSolveSec, CreatedBy)
+            Prisma.sql`INSERT INTO dbo.Question (Code, QuestionTypeId, Difficulty, Status, EstSolveSec, LotId, CreatedBy)
               OUTPUT INSERTED.QuestionId
-              VALUES (${code}, ${type.QuestionTypeId}, ${q.difficulty}, ${q.status}, ${q.estSolveSec ?? null}, ${CURRENT_USER_ID})`
+              VALUES (${code}, ${type.QuestionTypeId}, ${q.difficulty}, ${q.status}, ${q.estSolveSec ?? null}, ${lotIdBigInt}, ${CURRENT_USER_ID})`
           );
       const questionId = insertedRows[0].QuestionId;
 

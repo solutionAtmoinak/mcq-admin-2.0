@@ -24,7 +24,8 @@ export default async function QuestionDetailPage({
           <h1 className="mt-1 text-xl font-semibold text-zinc-900">{question.code}</h1>
         </div>
         <span className="text-xs text-zinc-400">
-          {question.typeName} · version {question.versionNo} · created by {question.createdBy} on{" "}
+          {question.typeName} · version {question.versionNo} · lot{" "}
+          <span className="font-mono">{question.lotNo ?? "—"}</span> · created by {question.createdBy} on{" "}
           {new Date(question.createdOn).toLocaleString()}
         </span>
       </div>
@@ -34,6 +35,7 @@ export default async function QuestionDetailPage({
         currentStatus={question.status}
         initialInput={question.input}
         referenceData={referenceData}
+        lotNo={question.lotNo}
       />
     </div>
   );

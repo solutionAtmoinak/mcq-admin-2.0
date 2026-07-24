@@ -1,7 +1,7 @@
 "use client";
 
 import Drawer from "@/app/components/Drawer";
-import { TagDimensionDatalist, TagPairEditor } from "@/app/components/TagPairEditor";
+import { TagPairEditor } from "@/app/components/TagPairEditor";
 import { AppSelectPicker } from "@/app/components/AppSelectPicker";
 import QuestionOptionalSettingsModal from "@/app/components/QuestionOptionalSettingsModal";
 import {
@@ -16,7 +16,12 @@ import {
   savedIconTextButtonClass,
   subSectionLabelClass,
 } from "@/app/components/ui";
-import { createQuestions, getQuestionInputForDuplicate, updateQuestion } from "@/app/lib/actions";
+import {
+  createQuestionLot,
+  createQuestions,
+  getQuestionInputForDuplicate,
+  updateQuestion,
+} from "@/app/lib/actions";
 import { QUESTION_STATUS, QUESTION_STATUS_BADGE, QUESTION_STATUS_LABELS } from "@/app/lib/constants";
 import type { TodayQuestionItem } from "@/app/lib/data";
 import { notify } from "@/app/lib/toast";
@@ -36,7 +41,7 @@ import {
 } from "@/app/lib/questionSchema";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useId, useMemo, useRef, useState, useTransition } from "react";
+import { useEffect, useId, useMemo, useRef, useState, useTransition } from "react";
 import { FiCheck, FiCopy, FiEdit2, FiLoader, FiSave, FiSettings, FiTrash2 } from "react-icons/fi";
 
 type Row = {
@@ -65,6 +70,14 @@ function stemPreview(stem: string): string {
   if (!trimmed) return "Untitled question";
   return trimmed.length > 70 ? `${trimmed.slice(0, 70)}…` : trimmed;
 }
+
+type ActiveLot = { lotId: string; lotNo: string };
+
+// The active lot is minted once per browser tab (see the effect below) and
+// kept in sessionStorage so an accidental re-render — or Next.js's dev-mode
+// double effect run — doesn't mint two lots for one sitting, while a real
+// page refresh or a new tab starts a fresh one.
+const ACTIVE_LOT_STORAGE_KEY = "qbe:activeLot";
 
 export default function QuestionBankEditor({
   referenceData,
@@ -114,6 +127,39 @@ export default function QuestionBankEditor({
   const [focusedClientId, setFocusedClientId] = useState<string | null>(null);
   const [duplicatingTodayId, setDuplicatingTodayId] = useState<string | null>(null);
   const rowRefs = useRef<Record<string, HTMLElement | null>>({});
+  const [lot, setLot] = useState<ActiveLot | null>(null);
+  const lotMintedRef = useRef(false);
+
+  // Mints (or restores) this tab's lot number once on mount. Every question
+  // saved afterwards — one row at a time or via "Save All" — is stamped
+  // with it server-side, so the whole sitting can be found/reused as a
+  // group later (surfaced read-only in Batch Default Settings).
+  useEffect(() => {
+    if (lotMintedRef.current) return;
+    lotMintedRef.current = true;
+
+    async function initLot() {
+      const stored = window.sessionStorage.getItem(ACTIVE_LOT_STORAGE_KEY);
+      if (stored) {
+        try {
+          setLot(JSON.parse(stored) as ActiveLot);
+          return;
+        } catch {
+          // Corrupted value — fall through and mint a fresh lot instead.
+        }
+      }
+      const res = await createQuestionLot();
+      if (!res.ok) {
+        notify(res.error, "error");
+        return;
+      }
+      const next: ActiveLot = { lotId: res.lotId, lotNo: res.lotNo };
+      setLot(next);
+      window.sessionStorage.setItem(ACTIVE_LOT_STORAGE_KEY, JSON.stringify(next));
+    }
+
+    initLot();
+  }, []);
 
   const typeOptions = referenceData.questionTypes;
 
@@ -379,7 +425,7 @@ export default function QuestionBankEditor({
         }
         notify(`Question ${row.saved.code} updated.`, "success");
       } else {
-        const res = await createQuestions([row.data]);
+        const res = await createQuestions([row.data], lot?.lotId ?? null);
         if (!res.ok) {
           setRowError(clientId, res.error);
           notify(res.error, "error");
@@ -419,7 +465,7 @@ export default function QuestionBankEditor({
     if (Object.keys(nextErrors).length > 0) return;
 
     startTransition(async () => {
-      const res = await createQuestions(unsaved.map((r) => r.data));
+      const res = await createQuestions(unsaved.map((r) => r.data), lot?.lotId ?? null);
       if (!res.ok) {
         setSubmitError(res.error);
         notify(res.error, "error");
@@ -441,8 +487,6 @@ export default function QuestionBankEditor({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <TagDimensionDatalist dimensions={referenceData.dimensions} />
-
       {/* Header + batch tools, one row */}
       <div className="shrink-0 border-b border-zinc-200 px-6 py-4">
         <div className="flex items-center justify-between gap-4">
@@ -592,7 +636,6 @@ export default function QuestionBankEditor({
           title={`Optional settings — Question ${activeSettingsIndex + 1}`}
           data={activeSettingsRow.data}
           referenceData={referenceData}
-          idPrefix={activeSettingsRow.clientId}
           onUpdate={(patch) => updateRow(activeSettingsRow.clientId, patch)}
           onUpdateTag={(i, patch) => updateTag(activeSettingsRow.clientId, i, patch)}
           onAddTag={() => addTag(activeSettingsRow.clientId)}
@@ -624,6 +667,32 @@ export default function QuestionBankEditor({
         widthClass="max-w-md"
       >
         <div className="flex flex-col gap-4">
+          <div>
+            <label className={labelClass}>Lot number</label>
+            <div className="flex items-center gap-2 rounded-md border border-zinc-200 bg-zinc-50 px-2.5 py-1.5">
+              <span className="flex-1 font-mono text-sm font-semibold text-zinc-800">
+                {lot?.lotNo ?? "Generating…"}
+              </span>
+              {lot && (
+                <button
+                  type="button"
+                  className={iconButtonClass}
+                  onClick={() => {
+                    navigator.clipboard.writeText(lot.lotNo);
+                    notify("Lot number copied.", "success");
+                  }}
+                  aria-label="Copy lot number"
+                  title="Copy lot number"
+                >
+                  <FiCopy size={13} />
+                </button>
+              )}
+            </div>
+            <p className="mt-1 text-xs text-zinc-500">
+              Every question saved in this session — one at a time or via &ldquo;Save All&rdquo; — is
+              tagged with this lot number, so the batch can be found together later.
+            </p>
+          </div>
           <p className="text-xs text-zinc-500">
             Applied automatically to new rows. Use &ldquo;Apply to all rows&rdquo; to overwrite existing rows
             too.
@@ -691,7 +760,6 @@ export default function QuestionBankEditor({
             <TagPairEditor
               tags={defaults.tags}
               referenceData={referenceData}
-              idPrefix="defaults"
               onUpdate={(i, patch) =>
                 setDefaults((d) => ({
                   ...d,
@@ -1055,6 +1123,17 @@ function QuestionRowCard({
           </div>
         )}
 
+        <div>
+          <label className={labelClass}>Explanation (optional)</label>
+          <textarea
+            className={`${inputClass} h-16`}
+            value={data.explanation}
+            onChange={(e) => onUpdate({ explanation: e.target.value })}
+            placeholder="Explain the correct answer…"
+            autoComplete="off"
+          />
+        </div>
+
         <div className="flex items-center justify-between gap-2 pt-1">
           <div>
             {optionBased && (
@@ -1069,7 +1148,7 @@ function QuestionRowCard({
               className={iconTextButtonClass}
               onClick={onOpenSettings}
               aria-label={`Optional settings for question ${index + 1}`}
-              title="Optional settings (marks, tags, code, explanation)"
+              title="Optional settings (marks, tags, code)"
             >
               <FiSettings size={14} />
               Optional

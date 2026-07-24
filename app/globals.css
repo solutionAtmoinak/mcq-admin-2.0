@@ -49,3 +49,11 @@ body {
 *::-webkit-scrollbar-corner {
   background: transparent;
 }
+
+/* rsuite's SelectPicker/DatePicker toggle ("sm" size) renders a few px
+   shorter than the app's standard input height (inputClass in ui.ts) —
+   force them to match so dropdowns and text inputs sit flush in the same
+   form row instead of looking subtly misaligned. */
+.rs-picker-toggle.rs-btn {
+  min-height: 34px;
+}

@@ -153,6 +153,7 @@ export default async function QuestionsPage({
               <th className="px-4 py-2">Difficulty</th>
               <th className="px-4 py-2">Status</th>
               <th className="px-4 py-2">Tags</th>
+              <th className="px-4 py-2">Lot</th>
               <th className="px-4 py-2">Created</th>
               <th className="px-4 py-2">Actions</th>
             </tr>
@@ -179,6 +180,9 @@ export default async function QuestionsPage({
                   {q.tagNames.slice(0, 3).join(", ")}
                   {q.tagNames.length > 3 ? "…" : ""}
                 </td>
+                <td className="px-4 py-2 font-mono text-xs text-zinc-500" title={q.lotNo ?? undefined}>
+                  {q.lotNo ?? "—"}
+                </td>
                 <td className="px-4 py-2 text-zinc-500">
                   {new Date(q.createdOn).toLocaleDateString()}
                 </td>
@@ -189,7 +193,7 @@ export default async function QuestionsPage({
             ))}
             {items.length === 0 && (
               <tr>
-                <td colSpan={8} className="px-4 py-8 text-center text-zinc-400">
+                <td colSpan={9} className="px-4 py-8 text-center text-zinc-400">
                   No questions match these filters yet.
                 </td>
               </tr>

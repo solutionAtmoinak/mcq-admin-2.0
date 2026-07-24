@@ -86,6 +86,7 @@ export type QuestionListItem = {
   stemPreview: string;
   tagNames: string[];
   createdOn: string;
+  lotNo: string | null;
 };
 
 export type QuestionListFilters = {
@@ -136,6 +137,7 @@ export async function listQuestions(
         QuestionType: true,
         QuestionVersion_Question_CurrentVersionIdToQuestionVersion: true,
         QuestionTag: { include: { Tag: true } },
+        QuestionLot: true,
       },
     }),
     prisma.question.count({ where }),
@@ -162,6 +164,7 @@ export async function listQuestions(
       stemPreview,
       tagNames: q.QuestionTag.map((qt) => qt.Tag.Name),
       createdOn: q.CreatedOn.toISOString(),
+      lotNo: q.QuestionLot?.LotNo ?? null,
     };
   });
 
@@ -221,6 +224,7 @@ export type EditableQuestion = {
   versionNo: number;
   createdBy: string;
   createdOn: string;
+  lotNo: string | null;
   input: QuestionInput;
 };
 
@@ -238,6 +242,7 @@ export async function getQuestionForEdit(questionId: string): Promise<EditableQu
       QuestionType: true,
       QuestionVersion_Question_CurrentVersionIdToQuestionVersion: true,
       QuestionTag: { include: { Tag: { include: { TagDimension: true } } } },
+      QuestionLot: true,
     },
   });
   if (!q) return null;
@@ -287,6 +292,7 @@ export async function getQuestionForEdit(questionId: string): Promise<EditableQu
     versionNo: version?.VersionNo ?? 1,
     createdBy: q.CreatedBy,
     createdOn: q.CreatedOn.toISOString(),
+    lotNo: q.QuestionLot?.LotNo ?? null,
     input,
   };
 }

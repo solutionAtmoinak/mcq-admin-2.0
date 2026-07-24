@@ -6,15 +6,14 @@ import { inputClass, labelClass, subCardClassLight, subSectionLabelClass } from 
 import type { QuestionInput, ReferenceData, TagPair } from "@/app/lib/questionSchema";
 
 // Reusable rsuite modal for the fields that aren't required to save a
-// question: scoring/timing, tags, code and explanation. Keeping these out of
-// the main row card is what lets that card stay compact.
+// question: scoring/timing, tags and code. Keeping these out of the main row
+// card is what lets that card stay compact.
 export default function QuestionOptionalSettingsModal({
   open,
   onClose,
   title,
   data,
   referenceData,
-  idPrefix,
   onUpdate,
   onUpdateTag,
   onAddTag,
@@ -25,7 +24,6 @@ export default function QuestionOptionalSettingsModal({
   title: string;
   data: QuestionInput;
   referenceData: ReferenceData;
-  idPrefix: string;
   onUpdate: (patch: Partial<QuestionInput>) => void;
   onUpdateTag: (index: number, patch: Partial<TagPair>) => void;
   onAddTag: () => void;
@@ -76,7 +74,6 @@ export default function QuestionOptionalSettingsModal({
             <TagPairEditor
               tags={data.tags}
               referenceData={referenceData}
-              idPrefix={idPrefix}
               onUpdate={onUpdateTag}
               onAdd={onAddTag}
               onRemove={onRemoveTag}
@@ -91,17 +88,6 @@ export default function QuestionOptionalSettingsModal({
               value={data.code}
               onChange={(e) => onUpdate({ code: e.target.value })}
               placeholder="Auto-generated"
-            />
-          </div>
-
-          <div className={subCardClassLight}>
-            <h3 className={subSectionLabelClass}>Explanation</h3>
-            <label className={labelClass}>Shown to students after they answer (optional)</label>
-            <textarea
-              className={`${inputClass} h-24`}
-              value={data.explanation}
-              onChange={(e) => onUpdate({ explanation: e.target.value })}
-              placeholder="Explain the correct answer…"
             />
           </div>
         </div>
