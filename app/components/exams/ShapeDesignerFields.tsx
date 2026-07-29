@@ -54,6 +54,7 @@ export default function ShapeDesignerFields({
   namePlaceholder,
   statusSlot,
   disabled = false,
+  pickedBySectionId,
 }: {
   draft: TemplateDraft;
   setDraft: (updater: TemplateDraft | ((d: TemplateDraft) => TemplateDraft)) => void;
@@ -64,6 +65,11 @@ export default function ShapeDesignerFields({
   namePlaceholder?: string;
   statusSlot?: ReactNode;
   disabled?: boolean;
+  // How many questions are already picked per existing section (keyed by
+  // sectionId) — only present in edit mode. Shown next to "Questions" so
+  // shrinking a section below its current picks is visible immediately,
+  // not just discovered later on save or on the question picker page.
+  pickedBySectionId?: Record<string, number>;
 }) {
   const [customKinds, setCustomKinds] = useState<{ code: string; name: string }[]>([]);
   const [kindModalOpen, setKindModalOpen] = useState(false);
@@ -209,6 +215,8 @@ export default function ShapeDesignerFields({
         <div className="flex flex-col gap-3">
           {draft.sections.map((s, idx) => {
             const hasNegative = s.negative > 0;
+            const picked = s.sectionId ? (pickedBySectionId?.[s.sectionId] ?? 0) : 0;
+            const overCapacity = picked > s.questions;
             return (
               <div key={s.clientId} className={subCardClass}>
                 <div className="mb-2 flex items-center justify-between">
@@ -246,10 +254,15 @@ export default function ShapeDesignerFields({
                       <label className={labelClass}>Questions</label>
                       <input
                         type="number"
-                        className={inputClass}
+                        className={`${inputClass} ${overCapacity ? "border-red-300 focus:border-red-500" : ""}`}
                         value={s.questions}
                         onChange={(e) => updateSection(s.clientId, { questions: Number(e.target.value) })}
                       />
+                      {picked > 0 && (
+                        <p className={`mt-1 whitespace-nowrap text-[11px] ${overCapacity ? "font-medium text-red-600" : "text-zinc-400"}`}>
+                          {picked} picked{overCapacity ? ` (${picked - s.questions} over)` : ""}
+                        </p>
+                      )}
                     </div>
                     <div className="w-24">
                       <label className={labelClass}>Mandatory</label>
@@ -257,7 +270,7 @@ export default function ShapeDesignerFields({
                         type="number"
                         className={inputClass}
                         value={s.mandatory}
-                        max={s.questions > 0 ? s.questions - 1 : 0}
+                        max={s.questions > 0 ? s.questions : 0}
                         onChange={(e) => updateSection(s.clientId, { mandatory: Number(e.target.value) })}
                       />
                     </div>

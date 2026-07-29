@@ -1,42 +1,82 @@
 "use client";
 
+import { Fragment, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { Sidebar, Sidenav, Nav } from "rsuite";
+import type { IconType } from "react-icons";
 import {
-  MdAddCircleOutline,
   MdHome,
+  MdOutlineQuestionAnswer,
+  MdAddCircleOutline,
   MdOutlineAssignment,
   MdOutlineDescription,
-  MdOutlineQuestionAnswer,
 } from "react-icons/md";
-import { Nav, Sidebar, Sidenav } from "rsuite";
 
-const NAV_ITEMS = [
-  { href: "/", label: "MCQ Admin", icon: MdHome, match: (p: string) => p === "/" },
+type NavLeaf = {
+  eventKey: string;
+  href: string;
+  label: string;
+  icon: IconType;
+  match: (pathname: string) => boolean;
+};
+
+type NavGroup = {
+  eventKey: string;
+  label: string;
+  icon: IconType;
+  items: NavLeaf[];
+};
+
+const NAV_GROUPS: NavGroup[] = [
   {
-    href: "/questions",
+    eventKey: "question-bank",
     label: "Question Bank",
     icon: MdOutlineQuestionAnswer,
-    match: (p: string) => p === "/questions",
+    items: [
+      {
+        eventKey: "question-bank-browse",
+        href: "/questions",
+        label: "Browse Question Bank",
+        icon: MdOutlineQuestionAnswer,
+        match: (p) => p === "/questions",
+      },
+      {
+        eventKey: "question-bank-create",
+        href: "/questions/new",
+        label: "Create Questions",
+        icon: MdAddCircleOutline,
+        match: (p) => p === "/questions/new",
+      },
+    ],
   },
   {
-    href: "/questions/new",
-    label: "Create Questions",
-    icon: MdAddCircleOutline,
-    match: (p: string) => p === "/questions/new",
-  },
-  {
-    href: "/exams/mock-tests",
-    label: "Design Exam",
+    eventKey: "exam-designer",
+    label: "Exam Designer",
     icon: MdOutlineAssignment,
-    match: (p: string) => p.startsWith("/exams/mock-tests"),
+    items: [
+      {
+        eventKey: "exam-designer-list",
+        href: "/exam-designer",
+        label: "Exam List",
+        icon: MdOutlineAssignment,
+        match: (p) => p === "/exam-designer",
+      },
+    ],
   },
   {
-    href: "/exams/templates",
-    label: "Templates",
+    eventKey: "exam-template",
+    label: "Exam Template",
     icon: MdOutlineDescription,
-    match: (p: string) => p.startsWith("/exams/templates"),
+    items: [
+      {
+        eventKey: "exam-template-list",
+        href: "/exam-templates",
+        label: "Template List",
+        icon: MdOutlineDescription,
+        match: (p) => p === "/exam-templates",
+      }
+    ],
   },
 ];
 
@@ -53,21 +93,33 @@ export default function NavBar() {
     >
       <Sidenav expanded={expanded} appearance="subtle" className="flex flex-1 flex-col">
         <Sidenav.Header className="flex justify-end border-b border-zinc-100 gap-x-2 items-center">
-          {expanded && <h2 className="text-xs font-bold bg-zinc-900 p-2 rounded-lg text-zinc-50">DTH Advance Exam Admin</h2>}
+          {expanded && (
+            <h2 className="text-xs font-bold bg-zinc-900 p-2 rounded-lg text-zinc-50">
+              DTH Advance Exam Admin
+            </h2>
+          )}
           <Sidenav.Toggle onToggle={setExpanded} />
         </Sidenav.Header>
         <Sidenav.Body className="flex-1">
           <Nav>
-            {NAV_ITEMS.map(({ href, label, icon: Icon, match }) => (
-              <Nav.Item
-                key={href}
-                as={Link}
-                href={href}
-                icon={<Icon />}
-                active={match(pathname)}
-              >
-                {label}
-              </Nav.Item>
+            <Nav.Item as={Link} href="/" icon={<MdHome />} active={pathname === "/"}>
+              MCQ Admin
+            </Nav.Item>
+            {NAV_GROUPS.map((group) => (
+              <Fragment key={group.eventKey}>
+                {expanded ? <Sidenav.GroupLabel>{group.label}</Sidenav.GroupLabel> : <hr />}
+                {group.items.map((item) => (
+                  <Nav.Item
+                    key={item.href}
+                    as={Link}
+                    href={item.href}
+                    icon={<item.icon />}
+                    active={item.match(pathname)}
+                  >
+                    {item.label}
+                  </Nav.Item>
+                ))}
+              </Fragment>
             ))}
           </Nav>
         </Sidenav.Body>

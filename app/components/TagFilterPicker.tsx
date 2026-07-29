@@ -9,15 +9,23 @@ type Option = { label: string; value: string };
 // Cascading multi-select: pick one or more tag keys (dimensions), then pick
 // one or more values from the union of tags belonging to those keys. Picks
 // are mirrored into hidden inputs so the surrounding plain GET <form> still
-// submits repeated `tagKey=`/`tagValue=` params without any JS submit handler.
+// submits repeated `tagKey=`/`tagValue=` params without any JS submit
+// handler. `onKeysChange`/`onValuesChange` are optional escape hatches for
+// callers that aren't a GET form at all (e.g. the question picker drawer,
+// which drives its own client-side search state) — they fire alongside the
+// hidden-input mirroring, so existing form-based callers are unaffected.
 export function TagFilterPicker({
   referenceData,
   defaultKeys,
   defaultValues,
+  onKeysChange,
+  onValuesChange,
 }: {
   referenceData: ReferenceData;
   defaultKeys: string[];
   defaultValues: string[];
+  onKeysChange?: (keys: string[]) => void;
+  onValuesChange?: (values: string[]) => void;
 }) {
   const [selectedKeys, setSelectedKeys] = useState<string[]>(defaultKeys);
   const [selectedValues, setSelectedValues] = useState<string[]>(defaultValues);
@@ -51,6 +59,7 @@ export function TagFilterPicker({
 
   function handleKeysChange(keys: string[]) {
     setSelectedKeys(keys);
+    onKeysChange?.(keys);
 
     const lowerKeys = new Set(keys.map((k) => k.toLowerCase()));
     const allowedDimIds = referenceData.dimensions
@@ -61,7 +70,16 @@ export function TagFilterPicker({
         (referenceData.tagsByDimensionId[id] ?? []).map((t) => t.name.toLowerCase())
       )
     );
-    setSelectedValues((prev) => prev.filter((v) => allowedValueNamesLower.has(v.toLowerCase())));
+    setSelectedValues((prev) => {
+      const next = prev.filter((v) => allowedValueNamesLower.has(v.toLowerCase()));
+      if (next.length !== prev.length) onValuesChange?.(next);
+      return next;
+    });
+  }
+
+  function handleValuesChange(values: string[]) {
+    setSelectedValues(values);
+    onValuesChange?.(values);
   }
 
   return (
@@ -78,7 +96,7 @@ export function TagFilterPicker({
       <TagPicker
         data={valueOptions}
         value={selectedValues}
-        onChange={(values) => setSelectedValues(values ?? [])}
+        onChange={(values) => handleValuesChange(values ?? [])}
         placeholder="Tag value(s)"
         disabled={valueOptions.length === 0}
         searchable

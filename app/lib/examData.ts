@@ -1,6 +1,7 @@
 import { prisma } from "@/app/lib/prisma";
 import {
   buildTemplateDraftFromExam,
+  filterJsonToTemplateDraft,
   parseBlueprintFilterJson,
   type BlueprintFilterJson,
   type MockTestRecipe,
@@ -24,6 +25,34 @@ export async function listBlueprintTemplates(): Promise<BlueprintTemplateListIte
     name: r.Name,
     filterJson: parseBlueprintFilterJson(r.FilterJson),
   }));
+}
+
+export type BlueprintTemplateDraftForEdit = {
+  templateId: string;
+  draft: TemplateDraft;
+};
+
+// Edit-page counterpart to listBlueprintTemplates — reshapes one template's
+// FilterJson into the same TemplateDraft the designer already knows how to
+// render/validate. filterJsonToTemplateDraft blanks the name (that fn is
+// also used for the "copy" flow on the exam page, where a copy needs its
+// own name) — restore the template's own name here since this is editing
+// that exact row, not spinning off a new one.
+export async function getBlueprintTemplateForEdit(templateId: string): Promise<BlueprintTemplateDraftForEdit | null> {
+  let id: bigint;
+  try {
+    id = BigInt(templateId);
+  } catch {
+    return null;
+  }
+
+  const row = await prisma.blueprintTemplate.findFirst({ where: { TemplateId: id, IsDeleted: false } });
+  if (!row) return null;
+
+  const filterJson = parseBlueprintFilterJson(row.FilterJson);
+  const draft: TemplateDraft = { ...filterJsonToTemplateDraft(filterJson), name: row.Name };
+
+  return { templateId: row.TemplateId.toString(), draft };
 }
 
 export async function listTestKinds(): Promise<{ code: string; name: string }[]> {
@@ -75,6 +104,20 @@ export async function listMockTests(opts: { page: number; pageSize: number }): P
   };
 }
 
+export type PickedQuestionView = {
+  questionId: string;
+  code: string;
+  stemPreview: string;
+  typeName: string;
+  difficulty: number;
+  status: number;
+  tagNames: string[];
+  lotNo: string | null;
+  seqNo: number;
+  marks: string;
+  negative: string;
+};
+
 export type MockTestSectionView = {
   sectionId: string;
   name: string;
@@ -82,6 +125,9 @@ export type MockTestSectionView = {
   pool: number;
   mandatory: number;
   picked: number;
+  marks: number;
+  negative: number;
+  questions: PickedQuestionView[];
 };
 
 export type MockTestDetail = {
@@ -120,15 +166,75 @@ export async function getMockTestForEdit(mockTestId: string): Promise<MockTestDe
       ? (parsedPolicy as MockTestRecipe)
       : null;
 
-  const pickedCounts = recipe
-    ? await Promise.all(
-        recipe.sections.map((s) =>
-          prisma.testQuestion.count({
-            where: { MockTestId: id, SectionId: BigInt(s.sectionId), IsDeleted: false },
-          })
-        )
-      )
-    : [];
+  const sectionIds = (recipe?.sections ?? []).map((s) => BigInt(s.sectionId));
+
+  // One query for every section's live marking rules (RulesJson.marks/
+  // negative — the recipe snapshot only kept pool/mandatory, see
+  // MockTestRecipe) and one for every picked question across all sections,
+  // rather than round-tripping per section.
+  const [paperSections, testQuestions] = await Promise.all([
+    sectionIds.length
+      ? prisma.paperSection.findMany({ where: { SectionId: { in: sectionIds } } })
+      : Promise.resolve([]),
+    sectionIds.length
+      ? prisma.testQuestion.findMany({
+          where: { MockTestId: id, SectionId: { in: sectionIds }, IsDeleted: false },
+          orderBy: { SeqNo: "asc" },
+          include: {
+            Question: {
+              include: {
+                QuestionType: true,
+                QuestionVersion_Question_CurrentVersionIdToQuestionVersion: true,
+                QuestionTag: { include: { Tag: true } },
+                QuestionLot: true,
+              },
+            },
+          },
+        })
+      : Promise.resolve([]),
+  ]);
+
+  const rulesBySectionId = new Map<string, { marks: number; negative: number }>();
+  for (const ps of paperSections) {
+    try {
+      const rules = JSON.parse(ps.RulesJson) as { marks: number; negative: number };
+      rulesBySectionId.set(ps.SectionId.toString(), { marks: rules.marks, negative: rules.negative });
+    } catch {
+      // leave unset — falls back to 0 below
+    }
+  }
+
+  const questionsBySectionId = new Map<string, PickedQuestionView[]>();
+  for (const tq of testQuestions) {
+    const q = tq.Question;
+    const version = q.QuestionVersion_Question_CurrentVersionIdToQuestionVersion;
+    let stemPreview = "(no content)";
+    if (version) {
+      try {
+        const presentation = JSON.parse(version.PresentationJson) as { stem?: string };
+        if (presentation.stem) stemPreview = presentation.stem;
+      } catch {
+        // leave default preview
+      }
+    }
+    const view: PickedQuestionView = {
+      questionId: q.QuestionId.toString(),
+      code: q.Code,
+      stemPreview,
+      typeName: q.QuestionType.Name,
+      difficulty: q.Difficulty,
+      status: q.Status,
+      tagNames: q.QuestionTag.map((qt) => qt.Tag.Name),
+      lotNo: q.QuestionLot?.LotNo ?? null,
+      seqNo: tq.SeqNo,
+      marks: tq.EffectiveMarks.toString(),
+      negative: tq.EffectiveNegative.toString(),
+    };
+    const sectionKey = tq.SectionId.toString();
+    const list = questionsBySectionId.get(sectionKey);
+    if (list) list.push(view);
+    else questionsBySectionId.set(sectionKey, [view]);
+  }
 
   return {
     mockTestId: row.MockTestId.toString(),
@@ -140,14 +246,21 @@ export async function getMockTestForEdit(mockTestId: string): Promise<MockTestDe
     totalMarks: row.ExamPaper.TotalMarks.toString(),
     durationMin: row.ExamPaper.DurationMin,
     templateId: recipe?.templateId ?? null,
-    sections: (recipe?.sections ?? []).map((s, i) => ({
-      sectionId: s.sectionId,
-      name: s.name,
-      questionType: s.questionType,
-      pool: s.pool,
-      mandatory: s.mandatory,
-      picked: pickedCounts[i] ?? 0,
-    })),
+    sections: (recipe?.sections ?? []).map((s) => {
+      const rules = rulesBySectionId.get(s.sectionId);
+      const questions = questionsBySectionId.get(s.sectionId) ?? [];
+      return {
+        sectionId: s.sectionId,
+        name: s.name,
+        questionType: s.questionType,
+        pool: s.pool,
+        mandatory: s.mandatory,
+        picked: questions.length,
+        marks: rules?.marks ?? 0,
+        negative: rules?.negative ?? 0,
+        questions,
+      };
+    }),
   };
 }
 
@@ -155,6 +268,11 @@ export type MockTestDraftForEdit = {
   mockTestId: string;
   status: number;
   draft: TemplateDraft;
+  // How many questions are already picked in each existing section right
+  // now, keyed by SectionId — lets the shape designer warn (and the save
+  // flow detect) when shrinking a section's pool below its current picks,
+  // before that mismatch is only discoverable later on the picker page.
+  pickedBySectionId: Record<string, number>;
 };
 
 // Edit-page counterpart to getMockTestForEdit's read-only view — pulls the
@@ -210,5 +328,13 @@ export async function getMockTestDraftForEdit(mockTestId: string): Promise<MockT
     }),
   });
 
-  return { mockTestId: row.MockTestId.toString(), status: row.Status, draft };
+  const pickedCounts = await prisma.testQuestion.groupBy({
+    by: ["SectionId"],
+    where: { MockTestId: id, IsDeleted: false },
+    _count: { _all: true },
+  });
+  const pickedBySectionId: Record<string, number> = {};
+  for (const c of pickedCounts) pickedBySectionId[c.SectionId.toString()] = c._count._all;
+
+  return { mockTestId: row.MockTestId.toString(), status: row.Status, draft, pickedBySectionId };
 }

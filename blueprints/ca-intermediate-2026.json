@@ -1,0 +1,261 @@
+{
+  "version": 1,
+  "testKind": {
+    "code": "final_exam",
+    "name": "Final Exam"
+  },
+  "markingScheme": {
+    "Name": "CA Intermediate Marking Scheme (ICAI New Scheme, 70:30, No Negative Marking)",
+    "RulesJson": {
+      "default": {
+        "marks": 10,
+        "negative": 0
+      },
+      "bySectionType": {
+        "descriptive": {
+          "marks": 10,
+          "negative": 0
+        },
+        "mcq": {
+          "marks": 2,
+          "negative": 0
+        }
+      },
+      "partialMarking": false,
+      "qualifyingOnly": false
+    }
+  },
+  "examPaper": {
+    "Code": "CA-INTERMEDIATE-TEMP-202",
+    "Name": "ca-intermediate-temp-2026",
+    "TotalMarks": 600,
+    "DurationMin": 1080,
+    "IsQualifying": false,
+    "DefaultLocale": "en"
+  },
+  "paperSections": [
+    {
+      "SeqNo": 1,
+      "Name": "Paper 1 (Group I): Advanced Accounting – Descriptive",
+      "RulesJson": {
+        "questionType": "descriptive",
+        "questions": 7,
+        "mandatory": 7,
+        "marks": 10,
+        "negative": 0
+      }
+    },
+    {
+      "SeqNo": 2,
+      "Name": "Paper 1 (Group I): Advanced Accounting – Case-Study MCQ",
+      "RulesJson": {
+        "questionType": "mcq",
+        "questions": 15,
+        "mandatory": 15,
+        "marks": 2,
+        "negative": 0
+      }
+    },
+    {
+      "SeqNo": 3,
+      "Name": "Paper 2 (Group I): Corporate and Other Laws – Descriptive",
+      "RulesJson": {
+        "questionType": "descriptive",
+        "questions": 7,
+        "mandatory": 7,
+        "marks": 10,
+        "negative": 0
+      }
+    },
+    {
+      "SeqNo": 4,
+      "Name": "Paper 2 (Group I): Corporate and Other Laws – Case-Study MCQ",
+      "RulesJson": {
+        "questionType": "mcq",
+        "questions": 15,
+        "mandatory": 15,
+        "marks": 2,
+        "negative": 0
+      }
+    },
+    {
+      "SeqNo": 5,
+      "Name": "Paper 3 (Group I): Taxation (Income-tax & GST) – Descriptive",
+      "RulesJson": {
+        "questionType": "descriptive",
+        "questions": 7,
+        "mandatory": 7,
+        "marks": 10,
+        "negative": 0
+      }
+    },
+    {
+      "SeqNo": 6,
+      "Name": "Paper 3 (Group I): Taxation (Income-tax & GST) – Case-Study MCQ",
+      "RulesJson": {
+        "questionType": "mcq",
+        "questions": 15,
+        "mandatory": 15,
+        "marks": 2,
+        "negative": 0
+      }
+    },
+    {
+      "SeqNo": 7,
+      "Name": "Paper 4 (Group II): Cost and Management Accounting – Descriptive",
+      "RulesJson": {
+        "questionType": "descriptive",
+        "questions": 7,
+        "mandatory": 7,
+        "marks": 10,
+        "negative": 0
+      }
+    },
+    {
+      "SeqNo": 8,
+      "Name": "Paper 4 (Group II): Cost and Management Accounting – Case-Study MCQ",
+      "RulesJson": {
+        "questionType": "mcq",
+        "questions": 15,
+        "mandatory": 15,
+        "marks": 2,
+        "negative": 0
+      }
+    },
+    {
+      "SeqNo": 9,
+      "Name": "Paper 5 (Group II): Auditing and Ethics – Descriptive",
+      "RulesJson": {
+        "questionType": "descriptive",
+        "questions": 7,
+        "mandatory": 7,
+        "marks": 10,
+        "negative": 0
+      }
+    },
+    {
+      "SeqNo": 10,
+      "Name": "Paper 5 (Group II): Auditing and Ethics – Case-Study MCQ",
+      "RulesJson": {
+        "questionType": "mcq",
+        "questions": 15,
+        "mandatory": 15,
+        "marks": 2,
+        "negative": 0
+      }
+    },
+    {
+      "SeqNo": 11,
+      "Name": "Paper 6 (Group II): Financial Mgmt & Strategic Mgmt – Descriptive",
+      "RulesJson": {
+        "questionType": "descriptive",
+        "questions": 7,
+        "mandatory": 7,
+        "marks": 10,
+        "negative": 0
+      }
+    },
+    {
+      "SeqNo": 12,
+      "Name": "Paper 6 (Group II): Financial Mgmt & Strategic Mgmt – Case-Study MCQ",
+      "RulesJson": {
+        "questionType": "mcq",
+        "questions": 15,
+        "mandatory": 15,
+        "marks": 2,
+        "negative": 0
+      }
+    }
+  ],
+  "summary": {
+    "totalQuestions": 132,
+    "totalMarks": 600,
+    "durationMin": 1080,
+    "subjects": [
+      {
+        "name": "Paper 1 (Group I): Advanced Accounting – Descriptive",
+        "mcq": 0,
+        "numerical": 0,
+        "total": 7,
+        "marks": 70
+      },
+      {
+        "name": "Paper 1 (Group I): Advanced Accounting – Case-Study MCQ",
+        "mcq": 15,
+        "numerical": 0,
+        "total": 15,
+        "marks": 30
+      },
+      {
+        "name": "Paper 2 (Group I): Corporate and Other Laws – Descriptive",
+        "mcq": 0,
+        "numerical": 0,
+        "total": 7,
+        "marks": 70
+      },
+      {
+        "name": "Paper 2 (Group I): Corporate and Other Laws – Case-Study MCQ",
+        "mcq": 15,
+        "numerical": 0,
+        "total": 15,
+        "marks": 30
+      },
+      {
+        "name": "Paper 3 (Group I): Taxation (Income-tax & GST) – Descriptive",
+        "mcq": 0,
+        "numerical": 0,
+        "total": 7,
+        "marks": 70
+      },
+      {
+        "name": "Paper 3 (Group I): Taxation (Income-tax & GST) – Case-Study MCQ",
+        "mcq": 15,
+        "numerical": 0,
+        "total": 15,
+        "marks": 30
+      },
+      {
+        "name": "Paper 4 (Group II): Cost and Management Accounting – Descriptive",
+        "mcq": 0,
+        "numerical": 0,
+        "total": 7,
+        "marks": 70
+      },
+      {
+        "name": "Paper 4 (Group II): Cost and Management Accounting – Case-Study MCQ",
+        "mcq": 15,
+        "numerical": 0,
+        "total": 15,
+        "marks": 30
+      },
+      {
+        "name": "Paper 5 (Group II): Auditing and Ethics – Descriptive",
+        "mcq": 0,
+        "numerical": 0,
+        "total": 7,
+        "marks": 70
+      },
+      {
+        "name": "Paper 5 (Group II): Auditing and Ethics – Case-Study MCQ",
+        "mcq": 15,
+        "numerical": 0,
+        "total": 15,
+        "marks": 30
+      },
+      {
+        "name": "Paper 6 (Group II): Financial Mgmt & Strategic Mgmt – Descriptive",
+        "mcq": 0,
+        "numerical": 0,
+        "total": 7,
+        "marks": 70
+      },
+      {
+        "name": "Paper 6 (Group II): Financial Mgmt & Strategic Mgmt – Case-Study MCQ",
+        "mcq": 15,
+        "numerical": 0,
+        "total": 15,
+        "marks": 30
+      }
+    ]
+  }
+}

@@ -191,11 +191,10 @@ export function validateShapeDraft(draft: TemplateDraft): string | null {
   for (const s of draft.sections) {
     if (!s.name.trim()) return "Every section needs a name.";
     if (s.questions <= 0) return `${s.name}: question count must be greater than 0.`;
-    // Strictly less than the pool, not equal — mandatory-to-attempt is the
-    // "must answer" count within a larger pool (e.g. JEE: 30 in the pool, 25
-    // mandatory, 5 optional); equal to the pool leaves no optional buffer.
-    if (s.mandatory < 0 || s.mandatory >= s.questions) {
-      return `${s.name}: mandatory-to-attempt count must be less than the pool of ${s.questions} question${s.questions === 1 ? "" : "s"}.`;
+    // Mandatory-to-attempt can be at most the full pool (e.g. every question
+    // required) or as few as 0 — either way it can't exceed the pool size.
+    if (s.mandatory < 0 || s.mandatory > s.questions) {
+      return `${s.name}: mandatory-to-attempt count must be between 0 and ${s.questions}.`;
     }
     if (s.marks <= 0) return `${s.name}: marks per question must be greater than 0.`;
     if (s.negative < 0) return `${s.name}: negative marks can't be below 0.`;

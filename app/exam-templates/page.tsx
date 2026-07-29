@@ -12,7 +12,7 @@ export default async function TemplatesPage() {
     <div className="mx-auto w-full max-w-4xl px-6 py-8">
       <div className="flex items-center justify-between">
         <h1 className="text-lg font-semibold text-zinc-900">Exam templates</h1>
-        <Link href="/exams/templates/new" className={primaryButtonClass}>
+        <Link href="/exam-templates/new" className={primaryButtonClass}>
           Design template
         </Link>
       </div>
@@ -31,11 +31,8 @@ export default async function TemplatesPage() {
                   </div>
                 </div>
                 <div className="flex gap-2">
-                  <Link href={`/exams/templates/new?copyFrom=${t.templateId}`} className={buttonClass}>
-                    Copy
-                  </Link>
-                  <Link href={`/exams/mock-tests/new?template=${t.templateId}`} className={buttonClass}>
-                    Use
+                  <Link href={`/exam-templates/${t.templateId}`} className={buttonClass}>
+                    Edit
                   </Link>
                 </div>
               </div>

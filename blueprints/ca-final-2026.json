@@ -1,0 +1,247 @@
+{
+  "version": 1,
+  "testKind": {
+    "code": "final_exam",
+    "name": "Final Exam"
+  },
+  "markingScheme": {
+    "Name": "CA Final Marking Scheme (ICAI New Scheme, 70:30, No Negative Marking)",
+    "RulesJson": {
+      "default": {
+        "marks": 10,
+        "negative": 0
+      },
+      "bySectionType": {
+        "descriptive": {
+          "marks": 10,
+          "negative": 0
+        },
+        "mcq": {
+          "marks": 2,
+          "negative": 0
+        },
+        "case_study": {
+          "marks": 25,
+          "negative": 0
+        }
+      },
+      "partialMarking": false,
+      "qualifyingOnly": false
+    }
+  },
+  "examPaper": {
+    "Code": "CA-FINAL-TEMP-2026",
+    "Name": "ca-final-temp-2026",
+    "TotalMarks": 600,
+    "DurationMin": 1140,
+    "IsQualifying": false,
+    "DefaultLocale": "en"
+  },
+  "paperSections": [
+    {
+      "SeqNo": 1,
+      "Name": "Paper 1 (Group I): Financial Reporting – Descriptive",
+      "RulesJson": {
+        "questionType": "descriptive",
+        "questions": 7,
+        "mandatory": 7,
+        "marks": 10,
+        "negative": 0
+      }
+    },
+    {
+      "SeqNo": 2,
+      "Name": "Paper 1 (Group I): Financial Reporting – Case-Study MCQ",
+      "RulesJson": {
+        "questionType": "mcq",
+        "questions": 15,
+        "mandatory": 15,
+        "marks": 2,
+        "negative": 0
+      }
+    },
+    {
+      "SeqNo": 3,
+      "Name": "Paper 2 (Group I): Advanced Financial Management – Descriptive",
+      "RulesJson": {
+        "questionType": "descriptive",
+        "questions": 7,
+        "mandatory": 7,
+        "marks": 10,
+        "negative": 0
+      }
+    },
+    {
+      "SeqNo": 4,
+      "Name": "Paper 2 (Group I): Advanced Financial Management – Case-Study MCQ",
+      "RulesJson": {
+        "questionType": "mcq",
+        "questions": 15,
+        "mandatory": 15,
+        "marks": 2,
+        "negative": 0
+      }
+    },
+    {
+      "SeqNo": 5,
+      "Name": "Paper 3 (Group I): Advanced Auditing & Prof. Ethics – Descriptive",
+      "RulesJson": {
+        "questionType": "descriptive",
+        "questions": 7,
+        "mandatory": 7,
+        "marks": 10,
+        "negative": 0
+      }
+    },
+    {
+      "SeqNo": 6,
+      "Name": "Paper 3 (Group I): Advanced Auditing & Prof. Ethics – Case-Study MCQ",
+      "RulesJson": {
+        "questionType": "mcq",
+        "questions": 15,
+        "mandatory": 15,
+        "marks": 2,
+        "negative": 0
+      }
+    },
+    {
+      "SeqNo": 7,
+      "Name": "Paper 4 (Group II): Direct Tax Laws & International Taxation – Descriptive",
+      "RulesJson": {
+        "questionType": "descriptive",
+        "questions": 7,
+        "mandatory": 7,
+        "marks": 10,
+        "negative": 0
+      }
+    },
+    {
+      "SeqNo": 8,
+      "Name": "Paper 4 (Group II): Direct Tax Laws & International Taxation – Case-Study MCQ",
+      "RulesJson": {
+        "questionType": "mcq",
+        "questions": 15,
+        "mandatory": 15,
+        "marks": 2,
+        "negative": 0
+      }
+    },
+    {
+      "SeqNo": 9,
+      "Name": "Paper 5 (Group II): Indirect Tax Laws – Descriptive",
+      "RulesJson": {
+        "questionType": "descriptive",
+        "questions": 7,
+        "mandatory": 7,
+        "marks": 10,
+        "negative": 0
+      }
+    },
+    {
+      "SeqNo": 10,
+      "Name": "Paper 5 (Group II): Indirect Tax Laws – Case-Study MCQ",
+      "RulesJson": {
+        "questionType": "mcq",
+        "questions": 15,
+        "mandatory": 15,
+        "marks": 2,
+        "negative": 0
+      }
+    },
+    {
+      "SeqNo": 11,
+      "Name": "Paper 6 (Group II): Integrated Business Solutions – Case Studies (Open Book, 240 min)",
+      "RulesJson": {
+        "questionType": "case_study",
+        "questions": 4,
+        "mandatory": 4,
+        "marks": 25,
+        "negative": 0
+      }
+    }
+  ],
+  "summary": {
+    "totalQuestions": 114,
+    "totalMarks": 600,
+    "durationMin": 1140,
+    "subjects": [
+      {
+        "name": "Paper 1 (Group I): Financial Reporting – Descriptive",
+        "mcq": 0,
+        "numerical": 0,
+        "total": 7,
+        "marks": 70
+      },
+      {
+        "name": "Paper 1 (Group I): Financial Reporting – Case-Study MCQ",
+        "mcq": 15,
+        "numerical": 0,
+        "total": 15,
+        "marks": 30
+      },
+      {
+        "name": "Paper 2 (Group I): Advanced Financial Management – Descriptive",
+        "mcq": 0,
+        "numerical": 0,
+        "total": 7,
+        "marks": 70
+      },
+      {
+        "name": "Paper 2 (Group I): Advanced Financial Management – Case-Study MCQ",
+        "mcq": 15,
+        "numerical": 0,
+        "total": 15,
+        "marks": 30
+      },
+      {
+        "name": "Paper 3 (Group I): Advanced Auditing & Prof. Ethics – Descriptive",
+        "mcq": 0,
+        "numerical": 0,
+        "total": 7,
+        "marks": 70
+      },
+      {
+        "name": "Paper 3 (Group I): Advanced Auditing & Prof. Ethics – Case-Study MCQ",
+        "mcq": 15,
+        "numerical": 0,
+        "total": 15,
+        "marks": 30
+      },
+      {
+        "name": "Paper 4 (Group II): Direct Tax Laws & International Taxation – Descriptive",
+        "mcq": 0,
+        "numerical": 0,
+        "total": 7,
+        "marks": 70
+      },
+      {
+        "name": "Paper 4 (Group II): Direct Tax Laws & International Taxation – Case-Study MCQ",
+        "mcq": 15,
+        "numerical": 0,
+        "total": 15,
+        "marks": 30
+      },
+      {
+        "name": "Paper 5 (Group II): Indirect Tax Laws – Descriptive",
+        "mcq": 0,
+        "numerical": 0,
+        "total": 7,
+        "marks": 70
+      },
+      {
+        "name": "Paper 5 (Group II): Indirect Tax Laws – Case-Study MCQ",
+        "mcq": 15,
+        "numerical": 0,
+        "total": 15,
+        "marks": 30
+      },
+      {
+        "name": "Paper 6 (Group II): Integrated Business Solutions – Case Studies (Open Book, 240 min)",
+        "mcq": 0,
+        "numerical": 0,
+        "total": 4,
+        "marks": 100
+      }
+    ]
+  }
+}

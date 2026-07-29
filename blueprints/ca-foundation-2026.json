@@ -1,0 +1,117 @@
+{
+  "version": 1,
+  "testKind": {
+    "code": "final_exam",
+    "name": "Final Exam"
+  },
+  "markingScheme": {
+    "Name": "CA Foundation Marking Scheme (ICAI New Scheme)",
+    "RulesJson": {
+      "default": {
+        "marks": 20,
+        "negative": 0
+      },
+      "bySectionType": {
+        "descriptive": {
+          "marks": 20,
+          "negative": 0
+        },
+        "mcq": {
+          "marks": 1,
+          "negative": 0.25
+        }
+      },
+      "partialMarking": false,
+      "qualifyingOnly": false
+    }
+  },
+  "examPaper": {
+    "Code": "CA-FOUNDATION-TEMP-2026",
+    "Name": "ca-foundation-temp-2026",
+    "TotalMarks": 400,
+    "DurationMin": 600,
+    "IsQualifying": false,
+    "DefaultLocale": "en"
+  },
+  "paperSections": [
+    {
+      "SeqNo": 1,
+      "Name": "Paper 1: Accounting",
+      "RulesJson": {
+        "questionType": "descriptive",
+        "questions": 5,
+        "mandatory": 5,
+        "marks": 20,
+        "negative": 0
+      }
+    },
+    {
+      "SeqNo": 2,
+      "Name": "Paper 2: Business Laws",
+      "RulesJson": {
+        "questionType": "descriptive",
+        "questions": 5,
+        "mandatory": 5,
+        "marks": 20,
+        "negative": 0
+      }
+    },
+    {
+      "SeqNo": 3,
+      "Name": "Paper 3: Quantitative Aptitude (120 min)",
+      "RulesJson": {
+        "questionType": "mcq",
+        "questions": 100,
+        "mandatory": 100,
+        "marks": 1,
+        "negative": 0.25
+      }
+    },
+    {
+      "SeqNo": 4,
+      "Name": "Paper 4: Business Economics (120 min)",
+      "RulesJson": {
+        "questionType": "mcq",
+        "questions": 100,
+        "mandatory": 100,
+        "marks": 1,
+        "negative": 0.25
+      }
+    }
+  ],
+  "summary": {
+    "totalQuestions": 210,
+    "totalMarks": 400,
+    "durationMin": 600,
+    "subjects": [
+      {
+        "name": "Paper 1: Accounting",
+        "mcq": 0,
+        "numerical": 0,
+        "total": 5,
+        "marks": 100
+      },
+      {
+        "name": "Paper 2: Business Laws",
+        "mcq": 0,
+        "numerical": 0,
+        "total": 5,
+        "marks": 100
+      },
+      {
+        "name": "Paper 3: Quantitative Aptitude (120 min)",
+        "mcq": 100,
+        "numerical": 0,
+        "total": 100,
+        "marks": 100
+      },
+      {
+        "name": "Paper 4: Business Economics (120 min)",
+        "mcq": 100,
+        "numerical": 0,
+        "total": 100,
+        "marks": 100
+      }
+    ]
+  }
+}

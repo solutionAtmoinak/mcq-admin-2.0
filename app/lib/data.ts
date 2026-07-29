@@ -96,18 +96,39 @@ export type QuestionListFilters = {
   tagKeys?: string[];
   tagValues?: string[];
   status?: number;
-  page: number;
-  pageSize: number;
+  lotId?: string;
+  // Question ids to leave out of the results — used by the exam question
+  // picker so a question already sitting in the target section can't be
+  // picked into it a second time.
+  excludeIds?: string[];
 };
 
-export async function listQuestions(
-  filters: QuestionListFilters
-): Promise<{ items: QuestionListItem[]; total: number }> {
-  const where = {
+// Shared by listQuestions (paginated rows) and listQuestionIdsForFilter
+// (bare id list for "select all matching") so the two can never drift apart
+// on what counts as a match.
+function buildQuestionWhere(filters: QuestionListFilters) {
+  // An unparseable lotId (shouldn't happen — the filter is always populated
+  // from listQuestionLots' own ids — but a garbage value should still match
+  // nothing rather than silently ignoring the filter) collapses to an id no
+  // real QuestionLot can ever have.
+  let lotIdBigInt: bigint | undefined;
+  if (filters.lotId) {
+    try {
+      lotIdBigInt = BigInt(filters.lotId);
+    } catch {
+      lotIdBigInt = BigInt(-1);
+    }
+  }
+
+  return {
     IsDeleted: false,
     ...(filters.typeId ? { QuestionTypeId: filters.typeId } : {}),
     ...(filters.difficulty ? { Difficulty: filters.difficulty } : {}),
     ...(filters.status !== undefined ? { Status: filters.status } : {}),
+    ...(lotIdBigInt !== undefined ? { LotId: lotIdBigInt } : {}),
+    ...(filters.excludeIds?.length
+      ? { QuestionId: { notIn: filters.excludeIds.map((id) => BigInt(id)) } }
+      : {}),
     ...(filters.tagKeys?.length || filters.tagValues?.length
       ? {
           QuestionTag: {
@@ -126,6 +147,12 @@ export async function listQuestions(
       ? { QuestionSearch: { some: { SearchText: { contains: filters.q } } } }
       : {}),
   };
+}
+
+export async function listQuestions(
+  filters: QuestionListFilters & { page: number; pageSize: number }
+): Promise<{ items: QuestionListItem[]; total: number }> {
+  const where = buildQuestionWhere(filters);
 
   const [rows, total] = await Promise.all([
     prisma.question.findMany({
@@ -169,6 +196,59 @@ export async function listQuestions(
   });
 
   return { items, total };
+}
+
+// Bare id list for a filter, capped at `limit` — powers the question
+// picker's "select all matching filters" action, which needs every matching
+// id (not just the current page) without paying for full row hydration.
+export async function listQuestionIdsForFilter(
+  filters: QuestionListFilters,
+  limit: number
+): Promise<{ ids: string[]; total: number }> {
+  const where = buildQuestionWhere(filters);
+
+  const [rows, total] = await Promise.all([
+    prisma.question.findMany({
+      where,
+      orderBy: { CreatedOn: "desc" },
+      take: Math.max(0, limit),
+      select: { QuestionId: true },
+    }),
+    prisma.question.count({ where }),
+  ]);
+
+  return { ids: rows.map((r) => r.QuestionId.toString()), total };
+}
+
+export type QuestionLotOption = {
+  lotId: string;
+  lotNo: string;
+  questionCount: number;
+  createdOn: string;
+};
+
+// Powers the question picker's lot filter — only lots that still have at
+// least one active question are worth offering, and the most recent ones
+// (each "Create Questions" browser session mints its own lot) are what an
+// admin is almost always looking for.
+export async function listQuestionLots(): Promise<QuestionLotOption[]> {
+  const lots = await prisma.questionLot.findMany({
+    where: { IsDeleted: false },
+    orderBy: { CreatedOn: "desc" },
+    take: 200,
+    include: {
+      _count: { select: { Question: { where: { IsDeleted: false } } } },
+    },
+  });
+
+  return lots
+    .filter((l) => l._count.Question > 0)
+    .map((l) => ({
+      lotId: l.LotId.toString(),
+      lotNo: l.LotNo,
+      questionCount: l._count.Question,
+      createdOn: l.CreatedOn.toISOString(),
+    }));
 }
 
 export type TodayQuestionItem = {

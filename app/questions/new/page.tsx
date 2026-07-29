@@ -14,7 +14,7 @@ export default async function NewQuestionsPage() {
   ]);
 
   return (
-    <div className="flex h-[calc(100dvh-3.5rem)] w-full flex-col overflow-hidden">
+    <div className="flex h-[calc(100dvh-0.1rem)] w-full flex-col overflow-hidden">
       <QuestionBankEditor referenceData={referenceData} todayQuestions={todayQuestions} />
     </div>
   );

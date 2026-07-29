@@ -1,12 +1,12 @@
+import DeleteMockTestButton from "@/app/components/exams/DeleteMockTestButton";
+import MockTestStatusBadge from "@/app/components/exams/MockTestStatusBadge";
+import { DataTable } from "@/app/components/table/DataTable";
+import { iconButtonClass, iconTextButtonClass, primaryButtonClass } from "@/app/components/ui";
+import { PAGE_SIZE_OPTIONS } from "@/app/lib/constants";
+import { MOCK_TEST_STATUS } from "@/app/lib/examConstants";
+import { listMockTests } from "@/app/lib/examData";
 import Link from "next/link";
 import { FiEdit2, FiPlusCircle } from "react-icons/fi";
-import { listMockTests } from "@/app/lib/examData";
-import { PAGE_SIZE_OPTIONS } from "@/app/lib/constants";
-import { primaryButtonClass, iconTextButtonClass, iconButtonClass } from "@/app/components/ui";
-import { DataTable } from "@/app/components/table/DataTable";
-import MockTestStatusBadge from "@/app/components/exams/MockTestStatusBadge";
-import DeleteMockTestButton from "@/app/components/exams/DeleteMockTestButton";
-import { MOCK_TEST_STATUS } from "@/app/lib/examConstants";
 
 export const metadata = { title: "Design Exam · Question Bank" };
 export const dynamic = "force-dynamic";
@@ -34,14 +34,14 @@ export default async function MockTestsPage({
           <h1 className="text-2xl font-semibold text-zinc-900">Design Exam</h1>
           <p className="mt-1 text-sm text-zinc-500">{total} exam(s) total</p>
         </div>
-        <Link href="/exams/mock-tests/new" className={primaryButtonClass}>
+        <Link href="/exam-designer/new" className={primaryButtonClass}>
           + Design Exam
         </Link>
       </div>
 
       <DataTable
         pagination={{
-          basePath: "/exams/mock-tests",
+          basePath: "/exam-designer",
           searchParams: params,
           page,
           pageSize,
@@ -65,10 +65,8 @@ export default async function MockTestsPage({
           <tbody className="divide-y divide-zinc-100">
             {items.map((m) => (
               <tr key={m.mockTestId} className="hover:bg-zinc-50">
-                <td className="px-4 py-2">
-                  <Link href={`/exams/mock-tests/${m.mockTestId}`} className="font-medium text-zinc-800 underline">
-                    {m.name}
-                  </Link>
+                <td className="px-4 py-2 font-medium text-zinc-800 ">
+                  {m.name}
                   <div className="font-mono text-xs text-zinc-400">{m.code}</div>
                 </td>
                 <td className="px-4 py-2 text-zinc-600">{m.paperName}</td>
@@ -80,11 +78,15 @@ export default async function MockTestsPage({
                 <td className="px-4 py-2 text-zinc-500">{new Date(m.createdOn).toLocaleDateString()}</td>
                 <td className="px-4 py-2">
                   <div className="flex items-center gap-2">
-                    <Link href={`/exams/mock-tests/${m.mockTestId}`} className={iconTextButtonClass} title="Add questions">
+                    <Link
+                      href={`/exam-designer/question-pick/${m.mockTestId}`}
+                      className={iconTextButtonClass}
+                      title="Add questions"
+                    >
                       <FiPlusCircle size={13} /> Add Questions
                     </Link>
                     {m.status === MOCK_TEST_STATUS.DRAFT && (
-                      <Link href={`/exams/mock-tests/${m.mockTestId}/edit`} className={iconButtonClass} title="Edit exam">
+                      <Link href={`/exam-designer/${m.mockTestId}`} className={iconButtonClass} title="Edit exam">
                         <FiEdit2 size={13} />
                       </Link>
                     )}

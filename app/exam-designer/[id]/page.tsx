@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import { getMockTestDraftForEdit, listBlueprintTemplates, listTestKinds } from "@/app/lib/examData";
-import ExamDesigner from "@/app/exams/mock-tests/new/ExamDesigner";
+import ExamDesigner from "@/app/exam-designer/new/ExamDesigner";
 
 export const metadata = { title: "Edit Exam · Question Bank" };
 export const dynamic = "force-dynamic";
@@ -24,6 +24,7 @@ export default async function EditMockTestPage({ params }: { params: Promise<{ i
         initialExamName={data.draft.name}
         initialDraft={data.draft}
         initialStatus={data.status}
+        pickedBySectionId={data.pickedBySectionId}
       />
     </div>
   );
