@@ -3,9 +3,10 @@ import { FilterSelectPicker } from "@/app/components/FilterSelectPicker";
 import QuestionStatusBadge from "@/app/components/QuestionStatusBadge";
 import { DataTable } from "@/app/components/table/DataTable";
 import { TagFilterPicker } from "@/app/components/TagFilterPicker";
-import { PAGE_SIZE_OPTIONS, QUESTION_STATUS_LABELS } from "@/app/lib/constants";
+import { PAGE_SIZE_OPTIONS } from "@/app/lib/constants";
 import { getReferenceData, listQuestions } from "@/app/lib/data";
-import { DIFFICULTY_LABELS, QUESTION_TYPE_LABELS, type QuestionTypeCode } from "@/app/lib/questionSchema";
+import { QUESTION_TYPE_LABELS, type QuestionTypeCode } from "@/app/lib/questionSchema";
+import { toLabelRecord } from "@/app/lib/serviceOptions";
 import Link from "next/link";
 import { FiSearch } from "react-icons/fi";
 
@@ -36,6 +37,7 @@ export default async function QuestionsPage({
 }) {
   const params = await searchParams;
   const referenceData = await getReferenceData();
+  const difficultyLabels = toLabelRecord(referenceData.difficultyOptions);
 
   const typeId = params.type ? Number(params.type) : undefined;
   const difficulty = params.difficulty ? Number(params.difficulty) : undefined;
@@ -92,19 +94,13 @@ export default async function QuestionsPage({
           name="difficulty"
           placeholder="All difficulties"
           defaultValue={difficulty ?? null}
-          data={Object.entries(DIFFICULTY_LABELS).map(([v, label]) => ({
-            label,
-            value: Number(v),
-          }))}
+          data={referenceData.difficultyOptions.map((o) => ({ value: o.value, label: o.displayLabel }))}
         />
         <FilterSelectPicker
           name="status"
           placeholder="All statuses"
           defaultValue={status ?? null}
-          data={Object.entries(QUESTION_STATUS_LABELS).map(([v, label]) => ({
-            label,
-            value: Number(v),
-          }))}
+          data={referenceData.questionStatusOptions.map((o) => ({ value: o.value, label: o.displayLabel }))}
         />
 
         <TagFilterPicker
@@ -171,10 +167,15 @@ export default async function QuestionsPage({
                 </td>
                 <td className="px-4 py-2 text-zinc-500">{q.typeName}</td>
                 <td className="px-4 py-2 text-zinc-500">
-                  {DIFFICULTY_LABELS[q.difficulty] ?? q.difficulty}
+                  {difficultyLabels[q.difficulty] ?? q.difficulty}
                 </td>
                 <td className="px-4 py-2">
-                  <QuestionStatusBadge questionId={q.id} questionCode={q.code} status={q.status} />
+                  <QuestionStatusBadge
+                    questionId={q.id}
+                    questionCode={q.code}
+                    status={q.status}
+                    statusOptions={referenceData.questionStatusOptions}
+                  />
                 </td>
                 <td className="px-4 py-2 text-zinc-500">
                   {q.tagNames.slice(0, 3).join(", ")}

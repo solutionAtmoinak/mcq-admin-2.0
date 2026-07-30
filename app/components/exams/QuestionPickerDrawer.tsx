@@ -4,12 +4,13 @@ import { AppSelectPicker } from "@/app/components/AppSelectPicker";
 import Drawer from "@/app/components/Drawer";
 import { TagFilterPicker } from "@/app/components/TagFilterPicker";
 import { buttonClass, inputClass, primaryButtonClass } from "@/app/components/ui";
-import { PAGE_SIZE_OPTIONS, QUESTION_STATUS_BADGE, QUESTION_STATUS_LABELS } from "@/app/lib/constants";
+import { PAGE_SIZE_OPTIONS, QUESTION_STATUS_BADGE } from "@/app/lib/constants";
 import type { QuestionListItem, QuestionLotOption } from "@/app/lib/data";
 import { addQuestionsToSection, searchPickerQuestions, selectAllPickerQuestionIds } from "@/app/lib/examActions";
-import { DIFFICULTY_LABELS, QUESTION_TYPE_LABELS, type QuestionTypeCode, type ReferenceData } from "@/app/lib/questionSchema";
+import { QUESTION_TYPE_LABELS, type QuestionTypeCode, type ReferenceData } from "@/app/lib/questionSchema";
+import { toLabelRecord } from "@/app/lib/serviceOptions";
 import { notify } from "@/app/lib/toast";
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { FiChevronLeft, FiChevronRight, FiLoader, FiSearch } from "react-icons/fi";
 
 const SEARCH_DEBOUNCE_MS = 300;
@@ -48,6 +49,15 @@ export default function QuestionPickerDrawer({
   lots: QuestionLotOption[];
   onAdded: () => void;
 }) {
+  const difficultyLabels = useMemo(
+    () => toLabelRecord(referenceData.difficultyOptions),
+    [referenceData.difficultyOptions]
+  );
+  const questionStatusLabels = useMemo(
+    () => toLabelRecord(referenceData.questionStatusOptions),
+    [referenceData.questionStatusOptions]
+  );
+
   const [q, setQ] = useState("");
   const [qDebounced, setQDebounced] = useState("");
   const [typeId, setTypeId] = useState<number | null>(null);
@@ -286,7 +296,7 @@ export default function QuestionPickerDrawer({
                 setDifficulty(v);
                 setPage(1);
               }}
-              data={Object.entries(DIFFICULTY_LABELS).map(([v, label]) => ({ label, value: Number(v) }))}
+              data={referenceData.difficultyOptions.map((o) => ({ value: o.value, label: o.displayLabel }))}
             />
             <AppSelectPicker
               placeholder="All statuses"
@@ -297,7 +307,7 @@ export default function QuestionPickerDrawer({
                 setStatus(v);
                 setPage(1);
               }}
-              data={Object.entries(QUESTION_STATUS_LABELS).map(([v, label]) => ({ label, value: Number(v) }))}
+              data={referenceData.questionStatusOptions.map((o) => ({ value: o.value, label: o.displayLabel }))}
             />
             <AppSelectPicker
               placeholder="All lots"
@@ -428,13 +438,13 @@ export default function QuestionPickerDrawer({
                         <td className="px-4 py-2 font-mono text-xs text-zinc-700">{item.code}</td>
                         <td className="max-w-xs truncate px-4 py-2 text-zinc-700">{item.stemPreview}</td>
                         <td className="px-4 py-2 text-zinc-500">{item.typeName}</td>
-                        <td className="px-4 py-2 text-zinc-500">{DIFFICULTY_LABELS[item.difficulty] ?? item.difficulty}</td>
+                        <td className="px-4 py-2 text-zinc-500">{difficultyLabels[item.difficulty] ?? item.difficulty}</td>
                         <td className="px-4 py-2">
                           <span
                             className={`rounded-full px-2.5 py-1 text-xs font-medium ${QUESTION_STATUS_BADGE[item.status] ?? "bg-zinc-100 text-zinc-700"
                               }`}
                           >
-                            {QUESTION_STATUS_LABELS[item.status] ?? item.status}
+                            {questionStatusLabels[item.status] ?? item.status}
                           </span>
                         </td>
                         <td className="px-4 py-2 text-zinc-500">

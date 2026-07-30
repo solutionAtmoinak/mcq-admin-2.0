@@ -2,13 +2,13 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import Swal from "sweetalert2";
 import { FiArrowDown, FiArrowUp, FiX } from "react-icons/fi";
 import { removeQuestionsFromSection, reorderSectionQuestions } from "@/app/lib/examActions";
 import { notify } from "@/app/lib/toast";
 import { dangerIconButtonClass, iconButtonClass } from "@/app/components/ui";
-import { DIFFICULTY_LABELS } from "@/app/lib/questionSchema";
+import { toLabelRecord, type ServiceOption } from "@/app/lib/serviceOptions";
 import type { PickedQuestionView } from "@/app/lib/examData";
 
 // A section's current picks, in exam order — the "re-arrange any time
@@ -23,16 +23,19 @@ export default function SectionQuestionList({
   sectionId,
   questions,
   locked,
+  difficultyOptions,
 }: {
   mockTestId: string;
   sectionId: string;
   questions: PickedQuestionView[];
   locked: boolean;
+  difficultyOptions: ServiceOption[];
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const headerCheckboxRef = useRef<HTMLInputElement>(null);
+  const difficultyLabels = useMemo(() => toLabelRecord(difficultyOptions), [difficultyOptions]);
 
   const allSelected = questions.length > 0 && questions.every((q) => selected.has(q.questionId));
   const someSelected = questions.some((q) => selected.has(q.questionId));
@@ -189,7 +192,7 @@ export default function SectionQuestionList({
                 </Link>
               </td>
               <td className="max-w-sm truncate px-3 py-2 text-zinc-700">{q.stemPreview}</td>
-              <td className="px-3 py-2 text-zinc-500">{DIFFICULTY_LABELS[q.difficulty] ?? q.difficulty}</td>
+              <td className="px-3 py-2 text-zinc-500">{difficultyLabels[q.difficulty] ?? q.difficulty}</td>
               <td className="px-3 py-2 text-zinc-500">
                 {q.tagNames.slice(0, 2).join(", ")}
                 {q.tagNames.length > 2 ? "…" : ""}

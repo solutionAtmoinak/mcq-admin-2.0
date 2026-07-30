@@ -1,9 +1,9 @@
 "use client";
 
-import Drawer from "@/app/components/Drawer";
-import { TagPairEditor } from "@/app/components/TagPairEditor";
 import { AppSelectPicker } from "@/app/components/AppSelectPicker";
+import Drawer from "@/app/components/Drawer";
 import QuestionOptionalSettingsModal from "@/app/components/QuestionOptionalSettingsModal";
+import { TagPairEditor } from "@/app/components/TagPairEditor";
 import {
   buttonClass,
   cardClass,
@@ -22,11 +22,9 @@ import {
   getQuestionInputForDuplicate,
   updateQuestion,
 } from "@/app/lib/actions";
-import { QUESTION_STATUS, QUESTION_STATUS_BADGE, QUESTION_STATUS_LABELS } from "@/app/lib/constants";
+import { QUESTION_STATUS_BADGE } from "@/app/lib/constants";
 import type { TodayQuestionItem } from "@/app/lib/data";
-import { notify } from "@/app/lib/toast";
 import {
-  DIFFICULTY_LABELS,
   IMPORT_JSON_EXAMPLE,
   QUESTION_TYPE_LABELS,
   emptyQuestion,
@@ -39,6 +37,8 @@ import {
   type ReferenceData,
   type TagPair,
 } from "@/app/lib/questionSchema";
+import { toLabelRecord, valueByLabel, type ServiceOption } from "@/app/lib/serviceOptions";
+import { notify } from "@/app/lib/toast";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useId, useMemo, useRef, useState, useTransition } from "react";
@@ -96,23 +96,35 @@ export default function QuestionBankEditor({
   // purely client-side, after hydration, so nextClientId() is safe there.
   const initialRowId = useId().replace(/:/g, "");
 
-  const [defaults, setDefaults] = useState<Defaults>({
+  // "Approved" is the sensible default for a freshly-typed question (most
+  // questions typed here are ready to use right away) — resolved by key
+  // from the DB-fetched options rather than a hardcoded status number, with
+  // the first available option as a last-resort fallback if that row is
+  // ever renamed/deactivated.
+  const defaultStatusValue =
+    valueByLabel(referenceData.questionStatusOptions, "APPROVED") ??
+    referenceData.questionStatusOptions[0]?.value ??
+    0;
+
+  const [defaults, setDefaults] = useState<Defaults>(() => ({
     tags: [{ key: "", value: "" }],
     difficulty: 2,
-    status: QUESTION_STATUS.APPROVED,
+    status: defaultStatusValue,
     marks: 1,
     negativeMarks: 0,
     estSolveSec: null,
-  });
+  }));
   const [rows, setRows] = useState<Row[]>(() => [
     {
       clientId: `row-${initialRowId}`,
-      data: emptyQuestion({ tags: [{ key: "", value: "" }] }),
+      data: emptyQuestion({ tags: [{ key: "", value: "" }] }, defaultStatusValue),
       saved: null,
     },
   ]);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [defaultsOpen, setDefaultsOpen] = useState(false);
+  const questionStatusOptions: ServiceOption[] =
+    referenceData.questionStatusOptions;
   const [importText, setImportText] = useState("");
   const [importOpen, setImportOpen] = useState(false);
   const [importWarnings, setImportWarnings] = useState<string[]>([]);
@@ -162,6 +174,10 @@ export default function QuestionBankEditor({
   }, []);
 
   const typeOptions = referenceData.questionTypes;
+  const questionStatusLabels = useMemo(
+    () => toLabelRecord(referenceData.questionStatusOptions),
+    [referenceData.questionStatusOptions]
+  );
 
   function cloneTags(tags: TagPair[]): TagPair[] {
     return tags.map((t) => ({ ...t }));
@@ -314,7 +330,10 @@ export default function QuestionBankEditor({
   function duplicateRow(clientId: string) {
     const source = rows.find((r) => r.clientId === clientId);
     if (!source) return;
-    const err = validateQuestion(source.data);
+    const err = validateQuestion(
+      source.data,
+      questionStatusOptions.map((o) => o.value),
+    );
     if (err) {
       setRowError(clientId, err);
       notify(err, "error");
@@ -342,7 +361,10 @@ export default function QuestionBankEditor({
     setImportError(null);
     setImportWarnings([]);
     try {
-      const { rows: parsedRows, warnings } = parseImportJson(importText);
+      const { rows: parsedRows, warnings } = parseImportJson(
+        importText,
+        questionStatusOptions,
+      );
       const newRows: Row[] = parsedRows.map((data) => ({ clientId: nextClientId(), data, saved: null }));
       setRows((prev) => (mode === "replace" ? newRows : [...prev, ...newRows]));
       setImportWarnings(warnings);
@@ -401,7 +423,10 @@ export default function QuestionBankEditor({
   async function handleSaveRow(clientId: string) {
     const row = rows.find((r) => r.clientId === clientId);
     if (!row) return;
-    const err = validateQuestion(row.data);
+    const err = validateQuestion(
+      row.data,
+      questionStatusOptions.map((o) => o.value),
+    );
     if (err) {
       setRowError(clientId, err);
       notify(err, "error");
@@ -456,8 +481,9 @@ export default function QuestionBankEditor({
     }
 
     const nextErrors: Record<string, string> = {};
+    const validStatusValues = questionStatusOptions.map((o) => o.value);
     for (const r of unsaved) {
-      const err = validateQuestion(r.data);
+      const err = validateQuestion(r.data, validStatusValues);
       if (err) nextErrors[r.clientId] = err;
     }
     setRowErrors(nextErrors);
@@ -489,27 +515,27 @@ export default function QuestionBankEditor({
     <div className="flex min-h-0 flex-1 flex-col">
       {/* Header + batch tools, one row */}
       <div className="shrink-0 border-b border-zinc-200 px-6 py-4">
-        <div className="flex items-center justify-between gap-4">
-          <div className="min-w-0 flex-1">
-            <h1 className="text-2xl font-semibold text-zinc-900">Create Questions</h1>
-            <p className="mt-1 text-sm text-zinc-500">
+        <div className="">
+          <h1 className="text-2xl font-semibold text-zinc-900 mb-2">Create Questions</h1>
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <p className="max-w-96 text-sm text-zinc-500">
               Add several questions in one batch, or paste JSON to import many at once. Each question is
               saved with its first version, tags and search index in a single step.
             </p>
-          </div>
-          <div className="flex shrink-0 flex-wrap items-center gap-2 bg-zinc-950 rounded-lg  px-3 py-2 shadow shadow-black ">
-            <span className="mr-1 text-xs font-semibold uppercase tracking-wide text-white">
-              Batch tools
-            </span>
-            <button className={buttonClass} onClick={() => setDefaultsOpen(true)}>
-              Batch Default Settings
-            </button>
-            <button className={buttonClass} onClick={() => setImportOpen(true)}>
-              Import from JSON
-            </button>
-            <button className={`${buttonClass} xl:hidden`} onClick={() => setExplorerOpen(true)}>
-              Today&apos;s Questions ({rows.length + savedElsewhereToday.length})
-            </button>
+            <div className="flex w-full shrink-0 flex-col gap-2 rounded-lg bg-zinc-950 px-3 py-2 shadow shadow-black sm:flex-row sm:flex-wrap sm:items-center lg:w-auto">
+              <span className="text-xs font-semibold uppercase tracking-wide text-white sm:mr-1">
+                Batch tools
+              </span>
+              <button className={buttonClass} onClick={() => setDefaultsOpen(true)}>
+                Batch Default Settings
+              </button>
+              <button className={buttonClass} onClick={() => setImportOpen(true)}>
+                Import from JSON
+              </button>
+              <button className={`${buttonClass} xl:hidden`} onClick={() => setExplorerOpen(true)}>
+                Today&apos;s Questions ({rows.length + savedElsewhereToday.length})
+              </button>
+            </div>
           </div>
         </div>
         {referenceData.dimensions.length === 0 && (
@@ -564,6 +590,8 @@ export default function QuestionBankEditor({
                 index={idx}
                 row={row}
                 typeOptions={typeOptions}
+                difficultyOptions={referenceData.difficultyOptions}
+                statusOptions={referenceData.questionStatusOptions}
                 error={errors[row.clientId]}
                 isSaving={savingIds.has(row.clientId)}
                 isFocused={focusedClientId === row.clientId}
@@ -594,6 +622,7 @@ export default function QuestionBankEditor({
             onFocusRow={focusRow}
             onDuplicateToday={handleDuplicateFromToday}
             duplicatingTodayId={duplicatingTodayId}
+            statusLabels={questionStatusLabels}
           />
         </aside>
       </div>
@@ -657,6 +686,7 @@ export default function QuestionBankEditor({
           onFocusRow={focusRow}
           onDuplicateToday={handleDuplicateFromToday}
           duplicatingTodayId={duplicatingTodayId}
+          statusLabels={questionStatusLabels}
         />
       </Drawer>
 
@@ -704,10 +734,7 @@ export default function QuestionBankEditor({
                 block
                 value={defaults.difficulty}
                 onChange={(v) => setDefaults((d) => ({ ...d, difficulty: v ?? d.difficulty }))}
-                data={Object.entries(DIFFICULTY_LABELS).map(([v, label]) => ({
-                  label,
-                  value: Number(v),
-                }))}
+                data={referenceData.difficultyOptions.map((o) => ({ value: o.value, label: o.displayLabel }))}
               />
             </div>
             <div>
@@ -716,10 +743,7 @@ export default function QuestionBankEditor({
                 block
                 value={defaults.status}
                 onChange={(v) => setDefaults((d) => ({ ...d, status: v ?? d.status }))}
-                data={Object.entries(QUESTION_STATUS_LABELS).map(([v, label]) => ({
-                  label,
-                  value: Number(v),
-                }))}
+                data={referenceData.questionStatusOptions.map((o) => ({ value: o.value, label: o.displayLabel }))}
               />
             </div>
             <div>
@@ -832,6 +856,7 @@ function TodayExplorerPanel({
   onFocusRow,
   onDuplicateToday,
   duplicatingTodayId,
+  statusLabels,
 }: {
   rows: Row[];
   savingIds: Set<string>;
@@ -840,6 +865,7 @@ function TodayExplorerPanel({
   onFocusRow: (clientId: string) => void;
   onDuplicateToday: (questionId: string, code: string) => void;
   duplicatingTodayId: string | null;
+  statusLabels: Record<number, string>;
 }) {
   return (
     <div className="flex flex-col gap-4">
@@ -891,11 +917,10 @@ function TodayExplorerPanel({
                   <div className="flex items-center justify-between gap-2">
                     <span className="font-mono text-xs font-semibold text-zinc-900">{q.code}</span>
                     <span
-                      className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ${
-                        QUESTION_STATUS_BADGE[q.status] ?? "bg-zinc-100 text-zinc-700"
-                      }`}
+                      className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ${QUESTION_STATUS_BADGE[q.status] ?? "bg-zinc-100 text-zinc-700"
+                        }`}
                     >
-                      {QUESTION_STATUS_LABELS[q.status] ?? q.status}
+                      {statusLabels[q.status] ?? q.status}
                     </span>
                   </div>
                   <span className="truncate text-xs text-zinc-500">{stemPreview(q.stemPreview)}</span>
@@ -934,6 +959,8 @@ function QuestionRowCard({
   index,
   row,
   typeOptions,
+  difficultyOptions,
+  statusOptions,
   error,
   isSaving,
   isFocused,
@@ -952,6 +979,8 @@ function QuestionRowCard({
   index: number;
   row: Row;
   typeOptions: ReferenceData["questionTypes"];
+  difficultyOptions: ServiceOption[];
+  statusOptions: ServiceOption[];
   error?: string;
   isSaving: boolean;
   isFocused: boolean;
@@ -973,9 +1002,8 @@ function QuestionRowCard({
   return (
     <section
       ref={cardRef}
-      className={`${cardClass} ${error ? "border-red-400" : ""} ${
-        isFocused ? "ring-2 ring-amber-400" : ""
-      }`}
+      className={`${cardClass} ${error ? "border-red-400" : ""} ${isFocused ? "ring-2 ring-amber-400" : ""
+        }`}
     >
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2 border-b border-zinc-100 pb-2">
         <div className="flex flex-wrap items-center gap-2">
@@ -1005,18 +1033,12 @@ function QuestionRowCard({
           <AppSelectPicker
             value={data.difficulty}
             onChange={(v) => onUpdate({ difficulty: v ?? data.difficulty })}
-            data={Object.entries(DIFFICULTY_LABELS).map(([v, label]) => ({
-              label,
-              value: Number(v),
-            }))}
+            data={difficultyOptions.map((o) => ({ value: o.value, label: o.displayLabel }))}
           />
           <AppSelectPicker
             value={data.status}
             onChange={(v) => onUpdate({ status: v ?? data.status })}
-            data={Object.entries(QUESTION_STATUS_LABELS).map(([v, label]) => ({
-              label,
-              value: Number(v),
-            }))}
+            data={statusOptions.map((o) => ({ value: o.value, label: o.displayLabel }))}
           />
         </div>
         <div className="flex items-center gap-1.5">

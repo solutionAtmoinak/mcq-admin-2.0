@@ -1,15 +1,15 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
-import { FiPlusCircle } from "react-icons/fi";
 import QuestionPickerDrawer from "@/app/components/exams/QuestionPickerDrawer";
 import SectionQuestionList from "@/app/components/exams/SectionQuestionList";
 import { cardClass, iconTextButtonClass, sectionLabelClass, subCardClass } from "@/app/components/ui";
-import { MOCK_TEST_STATUS } from "@/app/lib/examConstants";
-import type { MockTestDetail } from "@/app/lib/examData";
 import type { QuestionLotOption } from "@/app/lib/data";
+import type { MockTestDetail } from "@/app/lib/examData";
 import type { ReferenceData } from "@/app/lib/questionSchema";
+import { toValueRecord, type ServiceOption } from "@/app/lib/serviceOptions";
+import { useRouter } from "next/navigation";
+import { useMemo, useState } from "react";
+import { FiPlusCircle } from "react-icons/fi";
 
 // Page-level orchestrator for the exam-designer question-pick screen: a
 // card per section (picked-question table + "Pick questions" trigger) and
@@ -22,13 +22,16 @@ export default function QuestionPickWorkspace({
   mockTest,
   referenceData,
   lots,
+  examStatusOptions,
 }: {
   mockTest: MockTestDetail;
   referenceData: ReferenceData;
   lots: QuestionLotOption[];
+  examStatusOptions: ServiceOption[];
 }) {
   const router = useRouter();
-  const locked = mockTest.status !== MOCK_TEST_STATUS.DRAFT;
+  const EXAM_STATUS = toValueRecord(examStatusOptions);
+  const locked = mockTest.status !== EXAM_STATUS.DRAFT;
 
   const [drawerOpen, setDrawerOpen] = useState(false);
   // Kept separate from drawerOpen (and never cleared on close) so the
@@ -99,6 +102,7 @@ export default function QuestionPickWorkspace({
                     sectionId={s.sectionId}
                     questions={s.questions}
                     locked={locked}
+                    difficultyOptions={referenceData.difficultyOptions}
                   />
                 </div>
               </div>

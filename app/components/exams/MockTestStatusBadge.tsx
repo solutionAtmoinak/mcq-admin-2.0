@@ -1,10 +1,11 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useTransition } from "react";
+import { useMemo, useTransition } from "react";
 import Swal from "sweetalert2";
 import { changeMockTestStatus } from "@/app/lib/examActions";
-import { MOCK_TEST_STATUS_BADGE, MOCK_TEST_STATUS_LABELS } from "@/app/lib/examConstants";
+import { MOCK_TEST_STATUS_BADGE } from "@/app/lib/examConstants";
+import { toLabelRecord, type ServiceOption } from "@/app/lib/serviceOptions";
 import { notify } from "@/app/lib/toast";
 
 // Same click-to-change pattern as QuestionStatusBadge, reused here for
@@ -14,17 +15,20 @@ export default function MockTestStatusBadge({
   mockTestId,
   examName,
   status,
+  examStatusOptions,
 }: {
   mockTestId: string;
   examName: string;
   status: number;
+  examStatusOptions: ServiceOption[];
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
+  const statusLabels = useMemo(() => toLabelRecord(examStatusOptions), [examStatusOptions]);
 
   async function handleClick() {
-    const optionsHtml = Object.entries(MOCK_TEST_STATUS_LABELS)
-      .map(([value, label]) => `<option value="${value}" ${Number(value) === status ? "selected" : ""}>${label}</option>`)
+    const optionsHtml = examStatusOptions
+      .map(({ value, displayLabel }) => `<option value="${value}" ${value === status ? "selected" : ""}>${displayLabel}</option>`)
       .join("");
 
     const result = await Swal.fire<{ toStatus: number }>({
@@ -73,7 +77,7 @@ export default function MockTestStatusBadge({
       }`}
       title="Click to change status"
     >
-      {isPending ? "Updating…" : (MOCK_TEST_STATUS_LABELS[status] ?? status)}
+      {isPending ? "Updating…" : (statusLabels[status] ?? status)}
     </button>
   );
 }

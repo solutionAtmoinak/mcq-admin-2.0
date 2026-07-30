@@ -1,4 +1,5 @@
 import { prisma } from "@/app/lib/prisma";
+import { requireAuth } from "@/app/lib/auth";
 import {
   buildTemplateDraftFromExam,
   filterJsonToTemplateDraft,
@@ -7,7 +8,8 @@ import {
   type MockTestRecipe,
   type TemplateDraft,
 } from "@/app/lib/examSchema";
-import { MOCK_TEST_STATUS_LABELS } from "@/app/lib/examConstants";
+import { getServiceOptions } from "@/app/lib/serviceConfig";
+import { toLabelRecord } from "@/app/lib/serviceOptions";
 
 export type BlueprintTemplateListItem = {
   templateId: string;
@@ -16,6 +18,8 @@ export type BlueprintTemplateListItem = {
 };
 
 export async function listBlueprintTemplates(): Promise<BlueprintTemplateListItem[]> {
+  await requireAuth();
+
   const rows = await prisma.blueprintTemplate.findMany({
     where: { IsDeleted: false, IsActive: true },
     orderBy: { CreatedOn: "desc" },
@@ -39,6 +43,8 @@ export type BlueprintTemplateDraftForEdit = {
 // own name) — restore the template's own name here since this is editing
 // that exact row, not spinning off a new one.
 export async function getBlueprintTemplateForEdit(templateId: string): Promise<BlueprintTemplateDraftForEdit | null> {
+  await requireAuth();
+
   let id: bigint;
   try {
     id = BigInt(templateId);
@@ -56,6 +62,8 @@ export async function getBlueprintTemplateForEdit(templateId: string): Promise<B
 }
 
 export async function listTestKinds(): Promise<{ code: string; name: string }[]> {
+  await requireAuth();
+
   const rows = await prisma.testKind.findMany({
     where: { IsDeleted: false },
     orderBy: { TestKindId: "asc" },
@@ -77,8 +85,10 @@ export type MockTestListItem = {
 };
 
 export async function listMockTests(opts: { page: number; pageSize: number }): Promise<{ items: MockTestListItem[]; total: number }> {
+  await requireAuth();
+
   const where = { IsDeleted: false };
-  const [rows, total] = await Promise.all([
+  const [rows, total, examStatusOptions] = await Promise.all([
     prisma.mockTest.findMany({
       where,
       orderBy: { CreatedOn: "desc" },
@@ -87,14 +97,16 @@ export async function listMockTests(opts: { page: number; pageSize: number }): P
       take: opts.pageSize,
     }),
     prisma.mockTest.count({ where }),
+    getServiceOptions("EXAM_STATUS"),
   ]);
+  const statusLabels = toLabelRecord(examStatusOptions);
   return {
     items: rows.map((r) => ({
       mockTestId: r.MockTestId.toString(),
       code: r.Code,
       name: r.Name,
       status: r.Status,
-      statusLabel: MOCK_TEST_STATUS_LABELS[r.Status] ?? "Unknown",
+      statusLabel: statusLabels[r.Status] ?? "Unknown",
       paperName: r.ExamPaper.Name,
       totalMarks: r.ExamPaper.TotalMarks.toString(),
       durationMin: r.ExamPaper.DurationMin,
@@ -144,6 +156,8 @@ export type MockTestDetail = {
 };
 
 export async function getMockTestForEdit(mockTestId: string): Promise<MockTestDetail | null> {
+  await requireAuth();
+
   let id: bigint;
   try {
     id = BigInt(mockTestId);
@@ -151,11 +165,15 @@ export async function getMockTestForEdit(mockTestId: string): Promise<MockTestDe
     return null;
   }
 
-  const row = await prisma.mockTest.findFirst({
-    where: { MockTestId: id, IsDeleted: false },
-    include: { ExamPaper: { select: { Name: true, TotalMarks: true, DurationMin: true } } },
-  });
+  const [row, examStatusOptions] = await Promise.all([
+    prisma.mockTest.findFirst({
+      where: { MockTestId: id, IsDeleted: false },
+      include: { ExamPaper: { select: { Name: true, TotalMarks: true, DurationMin: true } } },
+    }),
+    getServiceOptions("EXAM_STATUS"),
+  ]);
   if (!row) return null;
+  const statusLabels = toLabelRecord(examStatusOptions);
 
   // Rows seeded before this recipe shape existed (e.g. the DB_SCHEMA.sql demo
   // row) carry a different, ad-hoc SelectionPolicyJson — treat anything
@@ -241,7 +259,7 @@ export async function getMockTestForEdit(mockTestId: string): Promise<MockTestDe
     code: row.Code,
     name: row.Name,
     status: row.Status,
-    statusLabel: MOCK_TEST_STATUS_LABELS[row.Status] ?? "Unknown",
+    statusLabel: statusLabels[row.Status] ?? "Unknown",
     paperName: row.ExamPaper.Name,
     totalMarks: row.ExamPaper.TotalMarks.toString(),
     durationMin: row.ExamPaper.DurationMin,
@@ -281,6 +299,8 @@ export type MockTestDraftForEdit = {
 // reshapes them into the same TemplateDraft the designer already knows how
 // to render and validate.
 export async function getMockTestDraftForEdit(mockTestId: string): Promise<MockTestDraftForEdit | null> {
+  await requireAuth();
+
   let id: bigint;
   try {
     id = BigInt(mockTestId);

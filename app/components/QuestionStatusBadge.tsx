@@ -1,10 +1,12 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useTransition } from "react";
+import { useMemo, useTransition } from "react";
 import Swal from "sweetalert2";
 import { changeQuestionStatus } from "@/app/lib/actions";
-import { QUESTION_STATUS_BADGE, QUESTION_STATUS_LABELS } from "@/app/lib/constants";
+import { QUESTION_STATUS_BADGE } from "@/app/lib/constants";
+import type { ServiceOption } from "@/app/lib/serviceOptions";
+import { toLabelRecord } from "@/app/lib/serviceOptions";
 import { notify } from "@/app/lib/toast";
 
 type StatusFormValues = { toStatus: number; comment: string };
@@ -13,19 +15,22 @@ export default function QuestionStatusBadge({
   questionId,
   questionCode,
   status,
+  statusOptions,
 }: {
   questionId: string;
   questionCode: string;
   status: number;
+  statusOptions: ServiceOption[];
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
+  const statusLabels = useMemo(() => toLabelRecord(statusOptions), [statusOptions]);
 
   async function handleClick() {
-    const optionsHtml = Object.entries(QUESTION_STATUS_LABELS)
+    const optionsHtml = statusOptions
       .map(
-        ([value, label]) =>
-          `<option value="${value}" ${Number(value) === status ? "selected" : ""}>${label}</option>`
+        ({ value, displayLabel }) =>
+          `<option value="${value}" ${value === status ? "selected" : ""}>${displayLabel}</option>`
       )
       .join("");
 
@@ -78,7 +83,7 @@ export default function QuestionStatusBadge({
       }`}
       title="Click to change status"
     >
-      {isPending ? "Updating…" : (QUESTION_STATUS_LABELS[status] ?? status)}
+      {isPending ? "Updating…" : (statusLabels[status] ?? status)}
     </button>
   );
 }

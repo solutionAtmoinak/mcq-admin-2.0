@@ -2,7 +2,7 @@
 // No server-only imports here: this file is used from both the client editor
 // and the server action, so it must stay framework/runtime agnostic.
 
-import { QUESTION_STATUS, QUESTION_STATUS_LABELS } from "@/app/lib/constants";
+import { valueByLabel, type ServiceOption } from "@/app/lib/serviceOptions";
 
 export type QuestionTypeCode = "mcq_single" | "msq" | "integer" | "owa";
 
@@ -43,14 +43,6 @@ export const QUESTION_TYPE_LABELS: Record<QuestionTypeCode, string> = {
   owa: "Fill in the Blank (One Word)",
 };
 
-export const DIFFICULTY_LABELS: Record<number, string> = {
-  1: "Very Easy",
-  2: "Easy",
-  3: "Medium",
-  4: "Hard",
-  5: "Very Hard",
-};
-
 export function isOptionBasedType(type: string): boolean {
   return type === "mcq_single" || type === "msq";
 }
@@ -63,14 +55,19 @@ export function nextClientId(): string {
   return `row-${Date.now().toString(36)}-${clientIdCounter}`;
 }
 
+// `defaultStatus` is the numeric value to use when `overrides` doesn't
+// already include one — callers resolve this from a fetched
+// ServiceOption[] (e.g. `valueByLabel(referenceData.questionStatusOptions,
+// "APPROVED")`), since this file has no DB access of its own.
 export function emptyQuestion(
   overrides: Partial<QuestionInput> = {},
+  defaultStatus: number = 0,
 ): QuestionInput {
   return {
     code: "",
     typeCode: "mcq_single",
     difficulty: 2,
-    status: QUESTION_STATUS.APPROVED,
+    status: defaultStatus,
     estSolveSec: null,
     stem: "",
     options: [
@@ -89,12 +86,15 @@ export function emptyQuestion(
   };
 }
 
-export function validateQuestion(q: QuestionInput): string | null {
+// `validStatusValues` comes from a fetched ServiceOption[] (e.g.
+// `referenceData.questionStatusOptions.map((o) => o.value)`) — this file has
+// no DB access of its own, so the caller resolves what counts as valid.
+export function validateQuestion(q: QuestionInput, validStatusValues: unknown[]): string | null {
   if (!q.stem.trim()) return "Question text (stem) is required.";
   if (!Number.isInteger(q.difficulty) || q.difficulty < 1 || q.difficulty > 5) {
     return "Difficulty must be between 1 and 5.";
   }
-  if (!(q.status in QUESTION_STATUS_LABELS)) return "Invalid status.";
+  if (!validStatusValues.includes(q.status)) return "Invalid status.";
   if (!Number.isFinite(q.marks) || q.marks <= 0)
     return "Marks must be greater than 0.";
   if (!Number.isFinite(q.negativeMarks) || q.negativeMarks < 0) {
@@ -218,6 +218,11 @@ export type ReferenceData = {
   questionTypes: { id: number; code: QuestionTypeCode; name: string }[];
   dimensions: ReferenceDimension[];
   tagsByDimensionId: Record<number, ReferenceTagOption[]>;
+  // Status/difficulty dropdown options — sourced from the DB's
+  // _InternalService table (see app/lib/serviceConfig.ts) so an admin can
+  // rename/reorder/deactivate them without a code change.
+  questionStatusOptions: ServiceOption[];
+  difficultyOptions: ServiceOption[];
 };
 
 // ---- JSON bulk-import ----
@@ -238,7 +243,18 @@ function asNumber(v: unknown): number | undefined {
   return typeof v === "number" && Number.isFinite(v) ? v : undefined;
 }
 
-export function parseImportJson(text: string): ImportResult {
+function normalizeStatusKey(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+// `statusOptions` comes from a fetched ServiceOption[] — pasted JSON can
+// name a status either by its machine key ("IN_REVIEW") or its current
+// display text ("In Review"), matched case/punctuation-insensitively
+// against both.
+export function parseImportJson(
+  text: string,
+  statusOptions: ServiceOption[],
+): ImportResult {
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
@@ -251,12 +267,14 @@ export function parseImportJson(text: string): ImportResult {
 
   const warnings: string[] = [];
   const validTypes = new Set<string>(["mcq_single", "msq", "integer", "owa"]);
-  const statusByLowerLabel = new Map(
-    Object.entries(QUESTION_STATUS_LABELS).map(([k, v]) => [
-      v.toLowerCase(),
-      Number(k),
-    ]),
-  );
+  const validStatusValues = statusOptions.map((o) => o.value);
+  const statusKeyLookup = new Map<string, number | string>();
+  for (const o of statusOptions) {
+    statusKeyLookup.set(normalizeStatusKey(o.category), o.value);
+    statusKeyLookup.set(normalizeStatusKey(o.label), o.value);
+  }
+  const defaultStatus =
+    valueByLabel(statusOptions, "APPROVED") ?? statusOptions[0]?.value ?? 0;
 
   const rows: QuestionInput[] = parsed.map((raw, idx) => {
     const r = (raw ?? {}) as Record<string, unknown>;
@@ -270,12 +288,15 @@ export function parseImportJson(text: string): ImportResult {
       typeCode = "mcq_single";
     }
 
-    let status: number = QUESTION_STATUS.APPROVED;
+    let status = defaultStatus;
     const rawStatus = r.status;
-    if (typeof rawStatus === "number" && rawStatus in QUESTION_STATUS_LABELS) {
+    if (
+      typeof rawStatus === "number" &&
+      validStatusValues.includes(rawStatus)
+    ) {
       status = rawStatus;
     } else if (typeof rawStatus === "string") {
-      const matched = statusByLowerLabel.get(rawStatus.toLowerCase());
+      const matched = statusKeyLookup.get(normalizeStatusKey(rawStatus));
       if (matched !== undefined) status = matched;
       else
         warnings.push(

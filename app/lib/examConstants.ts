@@ -1,11 +1,12 @@
-export const MOCK_TEST_STATUS = { DRAFT: 0, PUBLISHED: 1, ARCHIVED: 2 } as const;
-
-export const MOCK_TEST_STATUS_LABELS: Record<number, string> = {
-  0: "Draft",
-  1: "Published",
-  2: "Archived",
-};
-
+// Status values (both the set of valid ones and what counts as "draft",
+// "published", etc.) come from the DB (_InternalService, Category
+// "EXAM_STATUS") at runtime — see app/lib/serviceConfig.ts's
+// getServiceOptions/getServiceValue and examActions.ts's getExamStatus().
+// Nothing here hardcodes which number means what.
+//
+// Badge colors have no DB column to come from, so this one lookup stays a
+// fixed presentation-only palette, keyed by whatever numeric value the DB
+// currently reports for each status.
 export const MOCK_TEST_STATUS_BADGE: Record<number, string> = {
   0: "bg-amber-100 text-amber-800",
   1: "bg-emerald-100 text-emerald-700",

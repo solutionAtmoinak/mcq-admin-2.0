@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useTransition } from "react";
 import { AppSelectPicker } from "@/app/components/AppSelectPicker";
 import { changeMockTestStatus } from "@/app/lib/examActions";
-import { MOCK_TEST_STATUS_LABELS } from "@/app/lib/examConstants";
+import type { ServiceOption } from "@/app/lib/serviceOptions";
 import { notify } from "@/app/lib/toast";
 
 // Inline "Status" dropdown for the exam designer — same field/placement
@@ -15,10 +15,12 @@ export default function MockTestStatusSelect({
   mockTestId,
   examName,
   status,
+  examStatusOptions,
 }: {
   mockTestId: string;
   examName: string;
   status: number;
+  examStatusOptions: ServiceOption[];
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -43,7 +45,7 @@ export default function MockTestStatusSelect({
       disabled={isPending}
       cleanable={false}
       block
-      data={Object.entries(MOCK_TEST_STATUS_LABELS).map(([v, label]) => ({ label, value: Number(v) }))}
+      data={examStatusOptions.map((o) => ({ value: o.value, label: o.displayLabel }))}
     />
   );
 }

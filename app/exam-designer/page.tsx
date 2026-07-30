@@ -3,8 +3,9 @@ import MockTestStatusBadge from "@/app/components/exams/MockTestStatusBadge";
 import { DataTable } from "@/app/components/table/DataTable";
 import { iconButtonClass, iconTextButtonClass, primaryButtonClass } from "@/app/components/ui";
 import { PAGE_SIZE_OPTIONS } from "@/app/lib/constants";
-import { MOCK_TEST_STATUS } from "@/app/lib/examConstants";
 import { listMockTests } from "@/app/lib/examData";
+import { getServiceOptions } from "@/app/lib/serviceConfig";
+import { valueByLabel } from "@/app/lib/serviceOptions";
 import Link from "next/link";
 import { FiEdit2, FiPlusCircle } from "react-icons/fi";
 
@@ -25,7 +26,11 @@ export default async function MockTestsPage({
     ? requestedPageSize
     : DEFAULT_PAGE_SIZE;
 
-  const { items, total } = await listMockTests({ page, pageSize });
+  const [{ items, total }, examStatusOptions] = await Promise.all([
+    listMockTests({ page, pageSize }),
+    getServiceOptions("EXAM_STATUS"),
+  ]);
+  const draftStatusValue = valueByLabel(examStatusOptions, "DRAFT");
 
   return (
     <div className="flex w-full flex-1 flex-col gap-4 px-6 py-8">
@@ -73,7 +78,12 @@ export default async function MockTestsPage({
                 <td className="px-4 py-2 text-zinc-600">{m.totalMarks}</td>
                 <td className="px-4 py-2 text-zinc-600">{m.durationMin} min</td>
                 <td className="px-4 py-2">
-                  <MockTestStatusBadge mockTestId={m.mockTestId} examName={m.name} status={m.status} />
+                  <MockTestStatusBadge
+                    mockTestId={m.mockTestId}
+                    examName={m.name}
+                    status={m.status}
+                    examStatusOptions={examStatusOptions}
+                  />
                 </td>
                 <td className="px-4 py-2 text-zinc-500">{new Date(m.createdOn).toLocaleDateString()}</td>
                 <td className="px-4 py-2">
@@ -85,7 +95,7 @@ export default async function MockTestsPage({
                     >
                       <FiPlusCircle size={13} /> Add Questions
                     </Link>
-                    {m.status === MOCK_TEST_STATUS.DRAFT && (
+                    {m.status === draftStatusValue && (
                       <Link href={`/exam-designer/${m.mockTestId}`} className={iconButtonClass} title="Edit exam">
                         <FiEdit2 size={13} />
                       </Link>

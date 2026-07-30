@@ -253,6 +253,24 @@ model ExamStage {
   @@unique([ProgramId, Code], map: "UQ_ExamStage_Code")
 }
 
+// Shared lookup table for status/difficulty/etc. dropdowns across the app —
+// e.g. Category "QUESTION_STATUS" holds one row per QuestionStatus value
+// (ServiceLabel "APPROVED" / ServiceValue "4" / ServiceDisplayLabel
+// "Approved"). ServiceValue is stored as text even where it's numeric.
+model InternalService {
+  ServiceId           Int     @id @default(autoincrement())
+  Category            String  @db.NVarChar(250)
+  ServiceLabel        String  @db.NVarChar(500)
+  ServiceDisplayLabel String? @db.NVarChar(500)
+  ServiceValue        String? @db.NVarChar(500)
+  Description         String? @db.NVarChar(500)
+  SortedOrder         Int?
+  IsActive            Boolean @default(true)
+
+  @@index([Category, IsActive])
+  @@map("_InternalService")
+}
+
 model MarkingScheme {
   SchemeId    BigInt                   @id(map: "PK__MarkingS__DB7E1A623A100DF3") @default(autoincrement())
   Name        String                   @db.NVarChar(150)

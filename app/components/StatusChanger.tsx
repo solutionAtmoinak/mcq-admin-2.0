@@ -1,24 +1,27 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
+import { useMemo, useState, useTransition } from "react";
 import { changeQuestionStatus } from "@/app/lib/actions";
-import { QUESTION_STATUS_LABELS, QUESTION_STATUS_BADGE } from "@/app/lib/constants";
+import { QUESTION_STATUS_BADGE } from "@/app/lib/constants";
+import type { ServiceOption } from "@/app/lib/serviceOptions";
+import { toLabelRecord } from "@/app/lib/serviceOptions";
 import { inputClass, labelClass, primaryButtonClass, cardClass, sectionLabelClass } from "@/app/components/ui";
 import { AppSelectPicker } from "@/app/components/AppSelectPicker";
 
 export default function StatusChanger({
   questionId,
   currentStatus,
+  statusOptions,
 }: {
   questionId: string;
   currentStatus: number;
+  statusOptions: ServiceOption[];
 }) {
   const router = useRouter();
+  const statusLabels = useMemo(() => toLabelRecord(statusOptions), [statusOptions]);
   const [toStatus, setToStatus] = useState(() => {
-    const other = Object.keys(QUESTION_STATUS_LABELS)
-      .map(Number)
-      .find((s) => s !== currentStatus);
+    const other = statusOptions.map((o) => o.value).find((s) => s !== currentStatus);
     return other ?? currentStatus;
   });
   const [comment, setComment] = useState("");
@@ -47,7 +50,7 @@ export default function StatusChanger({
             QUESTION_STATUS_BADGE[currentStatus] ?? "bg-zinc-100 text-zinc-700"
           }`}
         >
-          {QUESTION_STATUS_LABELS[currentStatus] ?? currentStatus}
+          {statusLabels[currentStatus] ?? currentStatus}
         </span>
       </div>
 
@@ -57,9 +60,9 @@ export default function StatusChanger({
           <AppSelectPicker
             value={toStatus}
             onChange={(v) => setToStatus(v ?? currentStatus)}
-            data={Object.entries(QUESTION_STATUS_LABELS)
-              .map(([v, label]) => ({ label, value: Number(v) }))
-              .filter((o) => o.value !== currentStatus)}
+            data={statusOptions
+              .filter((o) => o.value !== currentStatus)
+              .map((o) => ({ value: o.value, label: o.displayLabel }))}
             block
           />
         </div>

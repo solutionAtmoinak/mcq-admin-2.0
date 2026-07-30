@@ -4,7 +4,6 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { updateQuestion } from "@/app/lib/actions";
 import {
-  DIFFICULTY_LABELS,
   QUESTION_TYPE_LABELS,
   isOptionBasedType,
   validateQuestion,
@@ -123,7 +122,10 @@ export default function QuestionEditForm({
   }
 
   function handleSubmit() {
-    const err = validateQuestion(data);
+    const err = validateQuestion(
+      data,
+      referenceData.questionStatusOptions.map((o) => o.value),
+    );
     if (err) {
       setError(err);
       return;
@@ -178,10 +180,7 @@ export default function QuestionEditForm({
               <AppSelectPicker
                 value={data.difficulty}
                 onChange={(v) => update({ difficulty: v ?? data.difficulty })}
-                data={Object.entries(DIFFICULTY_LABELS).map(([v, label]) => ({
-                  label,
-                  value: Number(v),
-                }))}
+                data={referenceData.difficultyOptions.map((o) => ({ value: o.value, label: o.displayLabel }))}
               />
             </div>
           </div>
@@ -274,7 +273,11 @@ export default function QuestionEditForm({
 
         {/* Sidebar */}
         <div className="flex flex-col gap-6 lg:col-span-1">
-          <StatusChanger questionId={questionId} currentStatus={currentStatus} />
+          <StatusChanger
+            questionId={questionId}
+            currentStatus={currentStatus}
+            statusOptions={referenceData.questionStatusOptions}
+          />
 
           <section className={cardClass}>
             <h2 className={sectionLabelClass}>Scoring &amp; timing</h2>

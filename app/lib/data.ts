@@ -1,4 +1,6 @@
 import { prisma } from "@/app/lib/prisma";
+import { requireAuth } from "@/app/lib/auth";
+import { getServiceOptions } from "@/app/lib/serviceConfig";
 import type {
   ReferenceData,
   ReferenceTagOption,
@@ -8,7 +10,9 @@ import type {
 import { emptyQuestion } from "@/app/lib/questionSchema";
 
 export async function getReferenceData(): Promise<ReferenceData> {
-  const [questionTypes, dimensions, tags] = await Promise.all([
+  await requireAuth();
+
+  const [questionTypes, dimensions, tags, questionStatusOptions, difficultyOptions] = await Promise.all([
     prisma.questionType.findMany({
       where: { IsDeleted: false, IsActive: true },
       orderBy: { QuestionTypeId: "asc" },
@@ -21,6 +25,8 @@ export async function getReferenceData(): Promise<ReferenceData> {
       where: { IsDeleted: false, IsActive: true },
       orderBy: { Name: "asc" },
     }),
+    getServiceOptions("QUESTION_STATUS"),
+    getServiceOptions("QUESTION_DIFFICULTY"),
   ]);
 
   const tagsByDimensionId: Record<number, ReferenceTagOption[]> = {};
@@ -36,6 +42,8 @@ export async function getReferenceData(): Promise<ReferenceData> {
     })),
     dimensions: dimensions.map((d) => ({ id: d.DimensionId, code: d.Code, name: d.Name })),
     tagsByDimensionId,
+    questionStatusOptions,
+    difficultyOptions,
   };
 }
 
@@ -47,6 +55,8 @@ export type BankSummary = {
 };
 
 export async function getBankSummary(): Promise<BankSummary> {
+  await requireAuth();
+
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
   const [total, recentCount, byStatusRaw, types] = await Promise.all([
@@ -152,6 +162,8 @@ function buildQuestionWhere(filters: QuestionListFilters) {
 export async function listQuestions(
   filters: QuestionListFilters & { page: number; pageSize: number }
 ): Promise<{ items: QuestionListItem[]; total: number }> {
+  await requireAuth();
+
   const where = buildQuestionWhere(filters);
 
   const [rows, total] = await Promise.all([
@@ -205,6 +217,8 @@ export async function listQuestionIdsForFilter(
   filters: QuestionListFilters,
   limit: number
 ): Promise<{ ids: string[]; total: number }> {
+  await requireAuth();
+
   const where = buildQuestionWhere(filters);
 
   const [rows, total] = await Promise.all([
@@ -232,6 +246,8 @@ export type QuestionLotOption = {
 // (each "Create Questions" browser session mints its own lot) are what an
 // admin is almost always looking for.
 export async function listQuestionLots(): Promise<QuestionLotOption[]> {
+  await requireAuth();
+
   const lots = await prisma.questionLot.findMany({
     where: { IsDeleted: false },
     orderBy: { CreatedOn: "desc" },
@@ -263,6 +279,8 @@ export type TodayQuestionItem = {
 // questions already saved today, so freshly-created ones show up alongside
 // the in-progress rows still being edited in the current session.
 export async function getTodayQuestions(limit = 50): Promise<TodayQuestionItem[]> {
+  await requireAuth();
+
   const startOfDay = new Date();
   startOfDay.setHours(0, 0, 0, 0);
 
@@ -309,6 +327,8 @@ export type EditableQuestion = {
 };
 
 export async function getQuestionForEdit(questionId: string): Promise<EditableQuestion | null> {
+  await requireAuth();
+
   let id: bigint;
   try {
     id = BigInt(questionId);

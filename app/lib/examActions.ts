@@ -4,9 +4,14 @@ import crypto from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { Prisma } from "@/app/generated/prisma/client";
 import { prisma } from "@/app/lib/prisma";
-import { CURRENT_USER_ID } from "@/app/lib/constants";
-import { listQuestionIdsForFilter, listQuestions, type QuestionListFilters, type QuestionListItem } from "@/app/lib/data";
-import { FALLBACK_CATALOG, MOCK_TEST_STATUS } from "@/app/lib/examConstants";
+import { requireAuth, requireUser, type CurrentUser } from "@/app/lib/auth";
+import {
+  listQuestionIdsForFilter,
+  listQuestions,
+  type QuestionListFilters,
+  type QuestionListItem,
+} from "@/app/lib/data";
+import { FALLBACK_CATALOG } from "@/app/lib/examConstants";
 import {
   buildFilterJsonFromDraft,
   codeSlug,
@@ -16,6 +21,8 @@ import {
   type MockTestRecipe,
   type TemplateDraft,
 } from "@/app/lib/examSchema";
+import { getServiceOptions } from "./serviceConfig";
+import { toValueRecord } from "./serviceOptions";
 
 type Tx = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
 
@@ -24,18 +31,38 @@ function generateMockTestCode(): string {
   return `MT-${rand}`;
 }
 
+export async function getExamStatus() {
+  const s = await getServiceOptions("EXAM_STATUS");
+  return toValueRecord(s);
+}
+
 // ExamBody/Program/Stage have no RowVer, so plain Prisma find-or-create is
 // fine. Every exam shares this one fallback chain — there's no admin UI for
 // the catalog yet, and real categorization already lives on the exam/
 // template's own name.
-async function resolveFallbackStageId(tx: Tx): Promise<bigint> {
-  let body = await tx.examBody.findFirst({ where: { Name: FALLBACK_CATALOG.bodyName, IsDeleted: false } });
+async function resolveFallbackStageId(
+  tx: Tx,
+  currentUser: CurrentUser,
+): Promise<bigint> {
+  let body = await tx.examBody.findFirst({
+    where: { Name: FALLBACK_CATALOG.bodyName, IsDeleted: false },
+  });
   if (!body) {
-    body = await tx.examBody.create({ data: { Name: FALLBACK_CATALOG.bodyName, CreatedBy: CURRENT_USER_ID } });
+    body = await tx.examBody.create({
+      data: {
+        Name: FALLBACK_CATALOG.bodyName,
+        CreatedBy: currentUser.id,
+        FranchiseId: currentUser.franchiseId,
+      },
+    });
   }
 
   let program = await tx.examProgram.findFirst({
-    where: { BodyId: body.BodyId, Code: FALLBACK_CATALOG.programCode, IsDeleted: false },
+    where: {
+      BodyId: body.BodyId,
+      Code: FALLBACK_CATALOG.programCode,
+      IsDeleted: false,
+    },
   });
   if (!program) {
     program = await tx.examProgram.create({
@@ -43,13 +70,18 @@ async function resolveFallbackStageId(tx: Tx): Promise<bigint> {
         BodyId: body.BodyId,
         Code: FALLBACK_CATALOG.programCode,
         Name: FALLBACK_CATALOG.programName,
-        CreatedBy: CURRENT_USER_ID,
+        CreatedBy: currentUser.id,
+        FranchiseId: currentUser.franchiseId,
       },
     });
   }
 
   let stage = await tx.examStage.findFirst({
-    where: { ProgramId: program.ProgramId, Code: FALLBACK_CATALOG.stageCode, IsDeleted: false },
+    where: {
+      ProgramId: program.ProgramId,
+      Code: FALLBACK_CATALOG.stageCode,
+      IsDeleted: false,
+    },
   });
   if (!stage) {
     stage = await tx.examStage.create({
@@ -58,7 +90,8 @@ async function resolveFallbackStageId(tx: Tx): Promise<bigint> {
         Code: FALLBACK_CATALOG.stageCode,
         Name: FALLBACK_CATALOG.stageName,
         SeqNo: 1,
-        CreatedBy: CURRENT_USER_ID,
+        CreatedBy: currentUser.id,
+        FranchiseId: currentUser.franchiseId,
       },
     });
   }
@@ -70,14 +103,29 @@ async function resolveFallbackStageId(tx: Tx): Promise<bigint> {
 // exam's own chosen test kind code (e.g. "mock_test" vs some other kind
 // picked in the designer — this is the "mock or not" decision), creating a
 // new row with the next free id only if that exact code doesn't exist yet.
-async function resolveTestKindId(tx: Tx, code: string, name: string): Promise<number> {
-  const existing = await tx.testKind.findFirst({ where: { Code: code, IsDeleted: false } });
+async function resolveTestKindId(
+  tx: Tx,
+  code: string,
+  name: string,
+  currentUser: CurrentUser,
+): Promise<number> {
+  const existing = await tx.testKind.findFirst({
+    where: { Code: code, IsDeleted: false },
+  });
   if (existing) return existing.TestKindId;
 
-  const highest = await tx.testKind.findFirst({ orderBy: { TestKindId: "desc" } });
+  const highest = await tx.testKind.findFirst({
+    orderBy: { TestKindId: "desc" },
+  });
   const nextId = (highest?.TestKindId ?? 0) + 1;
   const created = await tx.testKind.create({
-    data: { TestKindId: nextId, Code: code, Name: name, CreatedBy: CURRENT_USER_ID },
+    data: {
+      TestKindId: nextId,
+      Code: code,
+      Name: name,
+      CreatedBy: currentUser.id,
+      FranchiseId: currentUser.franchiseId,
+    },
   });
   return created.TestKindId;
 }
@@ -91,36 +139,47 @@ async function materializeMockTest(
   tx: Tx,
   filterJson: BlueprintFilterJson,
   templateIdForProvenance: string | null,
-  initialStatus: number = MOCK_TEST_STATUS.DRAFT
+  currentUser: CurrentUser,
+  initialStatus: number,
 ): Promise<bigint> {
-  const stageId = await resolveFallbackStageId(tx);
-  const testKind = filterJson.testKind ?? { code: "mock_test", name: "Mock Test" };
-  const testKindId = await resolveTestKindId(tx, testKind.code, testKind.name);
+  const stageId = await resolveFallbackStageId(tx, currentUser);
+  const testKind = filterJson.testKind ?? {
+    code: "mock_test",
+    name: "Mock Test",
+  };
+  const testKindId = await resolveTestKindId(
+    tx,
+    testKind.code,
+    testKind.name,
+    currentUser,
+  );
+
+  const EXAM_STATUS = await getExamStatus();
 
   // MarkingScheme, ExamPaper, PaperSection all have a RowVer column — raw
   // SQL with OUTPUT INSERTED.<Id>, same workaround used throughout
   // app/lib/actions.ts for Question/QuestionVersion.
   const [scheme] = await tx.$queryRaw<{ SchemeId: bigint }[]>(
-    Prisma.sql`INSERT INTO dbo.MarkingScheme (Name, RulesJson, CreatedBy)
+    Prisma.sql`INSERT INTO dbo.MarkingScheme (Name, RulesJson, CreatedBy, FranchiseId)
       OUTPUT INSERTED.SchemeId
-      VALUES (${filterJson.markingScheme.Name}, ${JSON.stringify(filterJson.markingScheme.RulesJson)}, ${CURRENT_USER_ID})`
+      VALUES (${filterJson.markingScheme.Name}, ${JSON.stringify(filterJson.markingScheme.RulesJson)}, ${currentUser.id}, ${currentUser.franchiseId})`,
   );
 
   // ExamPaper.Code is VARCHAR(30) — leave room for the "-" + 8 hex chars
   // that keep it unique across the many exams that can share one Name.
   const paperCode = `${codeSlug(filterJson.examPaper.Name).slice(0, 21)}-${crypto.randomBytes(4).toString("hex").toUpperCase()}`;
   const [paper] = await tx.$queryRaw<{ PaperId: bigint }[]>(
-    Prisma.sql`INSERT INTO dbo.ExamPaper (StageId, Code, Name, TotalMarks, DurationMin, IsQualifying, DefaultSchemeId, DefaultLocale, CreatedBy)
+    Prisma.sql`INSERT INTO dbo.ExamPaper (StageId, Code, Name, TotalMarks, DurationMin, IsQualifying, DefaultSchemeId, DefaultLocale, CreatedBy, FranchiseId)
       OUTPUT INSERTED.PaperId
-      VALUES (${stageId}, ${paperCode}, ${filterJson.examPaper.Name}, ${filterJson.examPaper.TotalMarks}, ${filterJson.examPaper.DurationMin}, ${filterJson.examPaper.IsQualifying ? 1 : 0}, ${scheme.SchemeId}, ${filterJson.examPaper.DefaultLocale}, ${CURRENT_USER_ID})`
+      VALUES (${stageId}, ${paperCode}, ${filterJson.examPaper.Name}, ${filterJson.examPaper.TotalMarks}, ${filterJson.examPaper.DurationMin}, ${filterJson.examPaper.IsQualifying ? 1 : 0}, ${scheme.SchemeId}, ${filterJson.examPaper.DefaultLocale}, ${currentUser.id}, ${currentUser.franchiseId})`,
   );
 
   const recipeSections: MockTestRecipe["sections"] = [];
   for (const s of filterJson.paperSections) {
     const [section] = await tx.$queryRaw<{ SectionId: bigint }[]>(
-      Prisma.sql`INSERT INTO dbo.PaperSection (PaperId, Name, SeqNo, RulesJson, CreatedBy)
+      Prisma.sql`INSERT INTO dbo.PaperSection (PaperId, Name, SeqNo, RulesJson, CreatedBy, FranchiseId)
         OUTPUT INSERTED.SectionId
-        VALUES (${paper.PaperId}, ${s.Name}, ${s.SeqNo}, ${JSON.stringify(s.RulesJson)}, ${CURRENT_USER_ID})`
+        VALUES (${paper.PaperId}, ${s.Name}, ${s.SeqNo}, ${JSON.stringify(s.RulesJson)}, ${currentUser.id}, ${currentUser.franchiseId})`,
     );
     recipeSections.push({
       sectionId: section.SectionId.toString(),
@@ -147,11 +206,14 @@ async function materializeMockTest(
   // Creating directly as Published (an admin can choose this up front, same
   // as picking a question's initial status on the question form) needs the
   // same PublishedOn stamp changeMockTestStatus applies on that transition.
-  const publishedOnSql = initialStatus === MOCK_TEST_STATUS.PUBLISHED ? Prisma.sql`GETDATE()` : Prisma.sql`NULL`;
+  const publishedOnSql =
+    initialStatus === EXAM_STATUS.PUBLISHED
+      ? Prisma.sql`GETDATE()`
+      : Prisma.sql`NULL`;
   const [mockTest] = await tx.$queryRaw<{ MockTestId: bigint }[]>(
-    Prisma.sql`INSERT INTO dbo.MockTest (Code, PaperId, TestKindId, Name, Status, PublishedOn, SelectionPolicyJson, CreatedBy)
+    Prisma.sql`INSERT INTO dbo.MockTest (Code, PaperId, TestKindId, Name, Status, PublishedOn, SelectionPolicyJson, CreatedBy, FranchiseId)
       OUTPUT INSERTED.MockTestId
-      VALUES (${code}, ${paper.PaperId}, ${testKindId}, ${filterJson.examPaper.Name}, ${initialStatus}, ${publishedOnSql}, ${JSON.stringify(mockTestRecipe)}, ${CURRENT_USER_ID})`
+      VALUES (${code}, ${paper.PaperId}, ${testKindId}, ${filterJson.examPaper.Name}, ${initialStatus}, ${publishedOnSql}, ${JSON.stringify(mockTestRecipe)}, ${currentUser.id}, ${currentUser.franchiseId})`,
   );
 
   return mockTest.MockTestId;
@@ -170,38 +232,70 @@ export async function createMockTestFromDraft(
   examName: string,
   draft: TemplateDraft,
   saveAsTemplateName?: string,
-  initialStatus: number = MOCK_TEST_STATUS.DRAFT
+  initialStatus?: number,
 ): Promise<CreateMockTestFromDraftResult> {
+  const currentUser = await requireUser();
+
   const trimmedExamName = examName.trim();
   if (!trimmedExamName) return { ok: false, error: "Please name the exam." };
 
   const shapeErr = validateShapeDraft(draft);
   if (shapeErr) return { ok: false, error: shapeErr };
 
-  const validStatuses = Object.values(MOCK_TEST_STATUS) as number[];
-  if (!validStatuses.includes(initialStatus)) return { ok: false, error: "Invalid status." };
+  const EXAM_STATUS = await getExamStatus();
+  const resolvedInitialStatus = initialStatus ?? EXAM_STATUS.DRAFT;
 
-  const examFilterJson = buildFilterJsonFromDraft({ ...draft, name: trimmedExamName });
+  const validStatuses = Object.values(EXAM_STATUS) as number[];
+  if (!validStatuses.includes(resolvedInitialStatus))
+    return { ok: false, error: "Invalid status." };
+
+  const examFilterJson = buildFilterJsonFromDraft({
+    ...draft,
+    name: trimmedExamName,
+  });
 
   let templateId: string | null = null;
   const templateName = saveAsTemplateName?.trim();
   if (templateName) {
-    const templateFilterJson = buildFilterJsonFromDraft({ ...draft, name: templateName });
+    const templateFilterJson = buildFilterJsonFromDraft({
+      ...draft,
+      name: templateName,
+    });
     try {
       const savedTemplate = await prisma.blueprintTemplate.create({
-        data: { Name: templateName, FilterJson: JSON.stringify(templateFilterJson), CreatedBy: CURRENT_USER_ID },
+        data: {
+          Name: templateName,
+          FilterJson: JSON.stringify(templateFilterJson),
+          CreatedBy: currentUser.id,
+          FranchiseId: currentUser.franchiseId,
+        },
       });
       templateId = savedTemplate.TemplateId.toString();
     } catch (e) {
-      return { ok: false, error: e instanceof Error ? e.message : "Failed to save the template." };
+      return {
+        ok: false,
+        error: e instanceof Error ? e.message : "Failed to save the template.",
+      };
     }
   }
 
   let mockTestId: bigint;
   try {
-    mockTestId = await prisma.$transaction((tx) => materializeMockTest(tx, examFilterJson, templateId, initialStatus));
+    mockTestId = await prisma.$transaction((tx) =>
+      materializeMockTest(
+        tx,
+        examFilterJson,
+        templateId,
+        currentUser,
+        resolvedInitialStatus,
+      ),
+    );
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : "Failed to create the exam draft." };
+    return {
+      ok: false,
+      error:
+        e instanceof Error ? e.message : "Failed to create the exam draft.",
+    };
   }
 
   revalidatePath("/exam-designer");
@@ -231,8 +325,10 @@ export async function updateMockTestFromDraft(
   examName: string,
   draft: TemplateDraft,
   saveAsTemplateName?: string,
-  overCapacityResolution: "trim" | "manual" = "manual"
+  overCapacityResolution: "trim" | "manual" = "manual",
 ): Promise<UpdateMockTestFromDraftResult> {
+  const currentUser = await requireUser();
+
   let id: bigint;
   try {
     id = BigInt(mockTestId);
@@ -246,51 +342,82 @@ export async function updateMockTestFromDraft(
   const shapeErr = validateShapeDraft(draft);
   if (shapeErr) return { ok: false, error: shapeErr };
 
-  const existing = await prisma.mockTest.findFirst({ where: { MockTestId: id, IsDeleted: false } });
+  const [existing, EXAM_STATUS] = await Promise.all([
+    prisma.mockTest.findFirst({
+      where: { MockTestId: id, IsDeleted: false },
+    }),
+    getExamStatus(),
+  ]);
   if (!existing) return { ok: false, error: "Exam not found." };
-  if (existing.Status !== MOCK_TEST_STATUS.DRAFT) return { ok: false, error: "Only draft exams can be edited." };
+  if (existing.Status !== EXAM_STATUS.DRAFT)
+    return { ok: false, error: "Only draft exams can be edited." };
 
-  const parsedPolicy: unknown = existing.SelectionPolicyJson ? JSON.parse(existing.SelectionPolicyJson) : null;
+  const parsedPolicy: unknown = existing.SelectionPolicyJson
+    ? JSON.parse(existing.SelectionPolicyJson)
+    : null;
   const priorTemplateId =
-    parsedPolicy && typeof parsedPolicy === "object" && "templateId" in (parsedPolicy as object)
+    parsedPolicy &&
+    typeof parsedPolicy === "object" &&
+    "templateId" in (parsedPolicy as object)
       ? ((parsedPolicy as MockTestRecipe).templateId ?? null)
       : null;
 
-  const filterJson = buildFilterJsonFromDraft({ ...draft, name: trimmedExamName });
+  const filterJson = buildFilterJsonFromDraft({
+    ...draft,
+    name: trimmedExamName,
+  });
 
   let templateId: string | null = null;
   const templateName = saveAsTemplateName?.trim();
   if (templateName) {
-    const templateFilterJson = buildFilterJsonFromDraft({ ...draft, name: templateName });
+    const templateFilterJson = buildFilterJsonFromDraft({
+      ...draft,
+      name: templateName,
+    });
     try {
       const savedTemplate = await prisma.blueprintTemplate.create({
-        data: { Name: templateName, FilterJson: JSON.stringify(templateFilterJson), CreatedBy: CURRENT_USER_ID },
+        data: {
+          Name: templateName,
+          FilterJson: JSON.stringify(templateFilterJson),
+          CreatedBy: currentUser.id,
+          FranchiseId: currentUser.franchiseId,
+        },
       });
       templateId = savedTemplate.TemplateId.toString();
     } catch (e) {
-      return { ok: false, error: e instanceof Error ? e.message : "Failed to save the template." };
+      return {
+        ok: false,
+        error: e instanceof Error ? e.message : "Failed to save the template.",
+      };
     }
   }
 
   try {
     await prisma.$transaction(async (tx) => {
-      const testKindId = await resolveTestKindId(tx, draft.testKindCode.trim(), draft.testKindName.trim() || draft.testKindCode.trim());
+      const testKindId = await resolveTestKindId(
+        tx,
+        draft.testKindCode.trim(),
+        draft.testKindName.trim() || draft.testKindCode.trim(),
+        currentUser,
+      );
 
       await tx.$executeRaw(
         Prisma.sql`UPDATE dbo.MarkingScheme
           SET Name = ${filterJson.markingScheme.Name}, RulesJson = ${JSON.stringify(filterJson.markingScheme.RulesJson)},
-              ModifiedBy = ${CURRENT_USER_ID}, ModifiedOn = GETDATE()
-          WHERE SchemeId = (SELECT DefaultSchemeId FROM dbo.ExamPaper WHERE PaperId = ${existing.PaperId})`
+              ModifiedBy = ${currentUser.id}, ModifiedOn = GETDATE()
+          WHERE SchemeId = (SELECT DefaultSchemeId FROM dbo.ExamPaper WHERE PaperId = ${existing.PaperId})`,
       );
 
       await tx.$executeRaw(
         Prisma.sql`UPDATE dbo.ExamPaper
           SET Name = ${filterJson.examPaper.Name}, TotalMarks = ${filterJson.examPaper.TotalMarks}, DurationMin = ${filterJson.examPaper.DurationMin},
-              ModifiedBy = ${CURRENT_USER_ID}, ModifiedOn = GETDATE()
-          WHERE PaperId = ${existing.PaperId}`
+              ModifiedBy = ${currentUser.id}, ModifiedOn = GETDATE()
+          WHERE PaperId = ${existing.PaperId}`,
       );
 
-      const currentSections = await tx.paperSection.findMany({ where: { PaperId: existing.PaperId, IsDeleted: false } });
+      const currentSections = await tx.paperSection.findMany({
+        where: { PaperId: existing.PaperId, IsDeleted: false },
+      });
 
       // PaperSection has a unique (PaperId, SeqNo) constraint that's checked
       // per-statement, not deferred to commit — reordering sections in place
@@ -299,7 +426,7 @@ export async function updateMockTestFromDraft(
       // final positions once nothing can clash.
       for (const cur of currentSections) {
         await tx.$executeRaw(
-          Prisma.sql`UPDATE dbo.PaperSection SET SeqNo = ${-cur.SeqNo - 100000} WHERE SectionId = ${cur.SectionId}`
+          Prisma.sql`UPDATE dbo.PaperSection SET SeqNo = ${-cur.SeqNo - 100000} WHERE SectionId = ${cur.SectionId}`,
         );
       }
 
@@ -316,37 +443,59 @@ export async function updateMockTestFromDraft(
           negative: s.negative,
         });
         const seqNo = i + 1;
-        const matchesExisting = s.sectionId && currentSections.some((c) => c.SectionId.toString() === s.sectionId);
+        const matchesExisting =
+          s.sectionId &&
+          currentSections.some((c) => c.SectionId.toString() === s.sectionId);
 
         if (matchesExisting) {
           await tx.$executeRaw(
             Prisma.sql`UPDATE dbo.PaperSection
-              SET Name = ${s.name.trim()}, SeqNo = ${seqNo}, RulesJson = ${rulesJson}, ModifiedBy = ${CURRENT_USER_ID}, ModifiedOn = GETDATE()
-              WHERE SectionId = ${BigInt(s.sectionId!)}`
+              SET Name = ${s.name.trim()}, SeqNo = ${seqNo}, RulesJson = ${rulesJson}, ModifiedBy = ${currentUser.id}, ModifiedOn = GETDATE()
+              WHERE SectionId = ${BigInt(s.sectionId!)}`,
           );
           keptSectionIds.add(s.sectionId!);
-          recipeSections.push({ sectionId: s.sectionId!, name: s.name.trim(), questionType: s.questionType, pool: s.questions, mandatory: s.mandatory });
+          recipeSections.push({
+            sectionId: s.sectionId!,
+            name: s.name.trim(),
+            questionType: s.questionType,
+            pool: s.questions,
+            mandatory: s.mandatory,
+          });
 
           if (overCapacityResolution === "trim") {
             const pickedRows = await tx.testQuestion.findMany({
-              where: { MockTestId: id, SectionId: BigInt(s.sectionId!), IsDeleted: false },
+              where: {
+                MockTestId: id,
+                SectionId: BigInt(s.sectionId!),
+                IsDeleted: false,
+              },
               orderBy: { SeqNo: "asc" },
               select: { SeqNo: true },
             });
             const excess = pickedRows.length - s.questions;
             if (excess > 0) {
-              const seqNosToRemove = pickedRows.slice(-excess).map((r) => r.SeqNo);
+              const seqNosToRemove = pickedRows
+                .slice(-excess)
+                .map((r) => r.SeqNo);
               await tx.testQuestion.updateMany({
-                where: { MockTestId: id, SectionId: BigInt(s.sectionId!), SeqNo: { in: seqNosToRemove } },
-                data: { IsDeleted: true, ModifiedBy: CURRENT_USER_ID, ModifiedOn: new Date() },
+                where: {
+                  MockTestId: id,
+                  SectionId: BigInt(s.sectionId!),
+                  SeqNo: { in: seqNosToRemove },
+                },
+                data: {
+                  IsDeleted: true,
+                  ModifiedBy: currentUser.id,
+                  ModifiedOn: new Date(),
+                },
               });
             }
           }
         } else {
           const [inserted] = await tx.$queryRaw<{ SectionId: bigint }[]>(
-            Prisma.sql`INSERT INTO dbo.PaperSection (PaperId, Name, SeqNo, RulesJson, CreatedBy)
+            Prisma.sql`INSERT INTO dbo.PaperSection (PaperId, Name, SeqNo, RulesJson, CreatedBy, FranchiseId)
               OUTPUT INSERTED.SectionId
-              VALUES (${existing.PaperId}, ${s.name.trim()}, ${seqNo}, ${rulesJson}, ${CURRENT_USER_ID})`
+              VALUES (${existing.PaperId}, ${s.name.trim()}, ${seqNo}, ${rulesJson}, ${currentUser.id}, ${currentUser.franchiseId})`,
           );
           recipeSections.push({
             sectionId: inserted.SectionId.toString(),
@@ -364,22 +513,29 @@ export async function updateMockTestFromDraft(
       for (const cur of currentSections) {
         if (!keptSectionIds.has(cur.SectionId.toString())) {
           await tx.$executeRaw(
-            Prisma.sql`UPDATE dbo.PaperSection SET IsDeleted = 1, ModifiedBy = ${CURRENT_USER_ID}, ModifiedOn = GETDATE() WHERE SectionId = ${cur.SectionId}`
+            Prisma.sql`UPDATE dbo.PaperSection SET IsDeleted = 1, ModifiedBy = ${currentUser.id}, ModifiedOn = GETDATE() WHERE SectionId = ${cur.SectionId}`,
           );
         }
       }
 
-      const recipe: MockTestRecipe = { version: 1, templateId: priorTemplateId, sections: recipeSections };
+      const recipe: MockTestRecipe = {
+        version: 1,
+        templateId: priorTemplateId,
+        sections: recipeSections,
+      };
 
       await tx.$executeRaw(
         Prisma.sql`UPDATE dbo.MockTest
           SET Name = ${trimmedExamName}, TestKindId = ${testKindId}, SelectionPolicyJson = ${JSON.stringify(recipe)},
-              ModifiedBy = ${CURRENT_USER_ID}, ModifiedOn = GETDATE()
-          WHERE MockTestId = ${id}`
+              ModifiedBy = ${currentUser.id}, ModifiedOn = GETDATE()
+          WHERE MockTestId = ${id}`,
       );
     });
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : "Failed to update the exam." };
+    return {
+      ok: false,
+      error: e instanceof Error ? e.message : "Failed to update the exam.",
+    };
   }
 
   revalidatePath("/exam-designer");
@@ -390,11 +546,18 @@ export async function updateMockTestFromDraft(
   return { ok: true, mockTestId, templateId };
 }
 
-export type ChangeMockTestStatusResult = { ok: true } | { ok: false; error: string };
+export type ChangeMockTestStatusResult =
+  | { ok: true }
+  | { ok: false; error: string };
 
 // Direct status change — Draft/Published/Archived. MockTest has a RowVer
 // column, so this is a raw-SQL UPDATE like every other write to it.
-export async function changeMockTestStatus(mockTestId: string, toStatus: number): Promise<ChangeMockTestStatusResult> {
+export async function changeMockTestStatus(
+  mockTestId: string,
+  toStatus: number,
+): Promise<ChangeMockTestStatusResult> {
+  const currentUser = await requireUser();
+
   let id: bigint;
   try {
     id = BigInt(mockTestId);
@@ -402,21 +565,31 @@ export async function changeMockTestStatus(mockTestId: string, toStatus: number)
     return { ok: false, error: "Invalid exam id." };
   }
 
-  const validStatuses = Object.values(MOCK_TEST_STATUS) as number[];
-  if (!validStatuses.includes(toStatus)) return { ok: false, error: "Invalid status." };
+  const EXAM_STATUS = await getExamStatus();
 
-  const existing = await prisma.mockTest.findFirst({ where: { MockTestId: id, IsDeleted: false } });
+  const validStatuses = Object.values(EXAM_STATUS) as number[];
+  if (!validStatuses.includes(toStatus))
+    return { ok: false, error: "Invalid status." };
+
+  const existing = await prisma.mockTest.findFirst({
+    where: { MockTestId: id, IsDeleted: false },
+  });
   if (!existing) return { ok: false, error: "Exam not found." };
-  if (existing.Status === toStatus) return { ok: false, error: "Exam is already in that status." };
+  if (existing.Status === toStatus)
+    return { ok: false, error: "Exam is already in that status." };
 
-  if (toStatus === MOCK_TEST_STATUS.PUBLISHED) {
+  if (toStatus === EXAM_STATUS.PUBLISHED) {
     // Publishing with a section over its own pool size (e.g. after the pool
     // was shrunk below what's already picked and the admin chose to fix it
     // manually — see updateMockTestFromDraft) would ship a paper that
     // doesn't match its own shape.
-    const parsedPolicy: unknown = existing.SelectionPolicyJson ? JSON.parse(existing.SelectionPolicyJson) : null;
+    const parsedPolicy: unknown = existing.SelectionPolicyJson
+      ? JSON.parse(existing.SelectionPolicyJson)
+      : null;
     const recipe: MockTestRecipe | null =
-      parsedPolicy && typeof parsedPolicy === "object" && Array.isArray((parsedPolicy as MockTestRecipe).sections)
+      parsedPolicy &&
+      typeof parsedPolicy === "object" &&
+      Array.isArray((parsedPolicy as MockTestRecipe).sections)
         ? (parsedPolicy as MockTestRecipe)
         : null;
 
@@ -426,14 +599,22 @@ export async function changeMockTestStatus(mockTestId: string, toStatus: number)
         where: { MockTestId: id, IsDeleted: false },
         _count: { _all: true },
       });
-      const pickedBySectionId = new Map(pickedCounts.map((c) => [c.SectionId.toString(), c._count._all]));
+      const pickedBySectionId = new Map(
+        pickedCounts.map((c) => [c.SectionId.toString(), c._count._all]),
+      );
 
       const overCapacity = recipe.sections
-        .map((s) => ({ name: s.name, pool: s.pool, picked: pickedBySectionId.get(s.sectionId) ?? 0 }))
+        .map((s) => ({
+          name: s.name,
+          pool: s.pool,
+          picked: pickedBySectionId.get(s.sectionId) ?? 0,
+        }))
         .filter((s) => s.picked > s.pool);
 
       if (overCapacity.length) {
-        const detail = overCapacity.map((s) => `${s.name} (${s.picked} picked, pool ${s.pool})`).join("; ");
+        const detail = overCapacity
+          .map((s) => `${s.name} (${s.picked} picked, pool ${s.pool})`)
+          .join("; ");
         return {
           ok: false,
           error: `Cannot publish: over capacity in ${overCapacity.length === 1 ? "this section" : "these sections"} — ${detail}. Remove the extra question(s) on the question picker page first.`,
@@ -443,14 +624,14 @@ export async function changeMockTestStatus(mockTestId: string, toStatus: number)
 
     await prisma.$executeRaw(
       Prisma.sql`UPDATE dbo.MockTest
-        SET Status = ${toStatus}, PublishedOn = GETDATE(), ModifiedBy = ${CURRENT_USER_ID}, ModifiedOn = GETDATE()
-        WHERE MockTestId = ${id}`
+        SET Status = ${toStatus}, PublishedOn = GETDATE(), ModifiedBy = ${currentUser.id}, ModifiedOn = GETDATE()
+        WHERE MockTestId = ${id}`,
     );
   } else {
     await prisma.$executeRaw(
       Prisma.sql`UPDATE dbo.MockTest
-        SET Status = ${toStatus}, ModifiedBy = ${CURRENT_USER_ID}, ModifiedOn = GETDATE()
-        WHERE MockTestId = ${id}`
+        SET Status = ${toStatus}, ModifiedBy = ${currentUser.id}, ModifiedOn = GETDATE()
+        WHERE MockTestId = ${id}`,
     );
   }
 
@@ -466,7 +647,11 @@ export type DeleteMockTestResult = { ok: true } | { ok: false; error: string };
 // Soft delete only, matching deleteQuestion's convention — flips IsDeleted
 // so the exam drops out of every IsDeleted:false query without losing its
 // history (any TestQuestion rows, if the picker has been used already).
-export async function deleteMockTest(mockTestId: string): Promise<DeleteMockTestResult> {
+export async function deleteMockTest(
+  mockTestId: string,
+): Promise<DeleteMockTestResult> {
+  const currentUser = await requireUser();
+
   let id: bigint;
   try {
     id = BigInt(mockTestId);
@@ -474,13 +659,15 @@ export async function deleteMockTest(mockTestId: string): Promise<DeleteMockTest
     return { ok: false, error: "Invalid exam id." };
   }
 
-  const existing = await prisma.mockTest.findFirst({ where: { MockTestId: id, IsDeleted: false } });
+  const existing = await prisma.mockTest.findFirst({
+    where: { MockTestId: id, IsDeleted: false },
+  });
   if (!existing) return { ok: false, error: "Exam not found." };
 
   await prisma.$executeRaw(
     Prisma.sql`UPDATE dbo.MockTest
-      SET IsDeleted = 1, ModifiedBy = ${CURRENT_USER_ID}, ModifiedOn = GETDATE()
-      WHERE MockTestId = ${id}`
+      SET IsDeleted = 1, ModifiedBy = ${currentUser.id}, ModifiedOn = GETDATE()
+      WHERE MockTestId = ${id}`,
   );
 
   revalidatePath("/exam-designer");
@@ -497,7 +684,11 @@ export type CreateBlueprintTemplateResult =
 // only get created later, when this template is used to design an exam
 // (createMockTestFromDraft above). BlueprintTemplate has no RowVer, so a
 // plain Prisma create is fine.
-export async function createBlueprintTemplate(draft: TemplateDraft): Promise<CreateBlueprintTemplateResult> {
+export async function createBlueprintTemplate(
+  draft: TemplateDraft,
+): Promise<CreateBlueprintTemplateResult> {
+  const currentUser = await requireUser();
+
   const err = validateTemplateDraft(draft);
   if (err) return { ok: false, error: err };
 
@@ -508,25 +699,36 @@ export async function createBlueprintTemplate(draft: TemplateDraft): Promise<Cre
       data: {
         Name: draft.name.trim(),
         FilterJson: JSON.stringify(filterJson),
-        CreatedBy: CURRENT_USER_ID,
+        CreatedBy: currentUser.id,
+        FranchiseId: currentUser.franchiseId,
       },
     });
     revalidatePath("/exam-templates");
     revalidatePath("/exam-designer/new");
     return { ok: true, templateId: template.TemplateId.toString() };
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : "Failed to save the template." };
+    return {
+      ok: false,
+      error: e instanceof Error ? e.message : "Failed to save the template.",
+    };
   }
 }
 
-export type UpdateBlueprintTemplateResult = { ok: true } | { ok: false; error: string };
+export type UpdateBlueprintTemplateResult =
+  | { ok: true }
+  | { ok: false; error: string };
 
 // Edit-page counterpart to createBlueprintTemplate — overwrites the same
 // row's Name/FilterJson in place. Safe to do directly (no materialized
 // ExamPaper/PaperSection exist for a template — see createMockTestFromDraft
 // for where that split happens), and BlueprintTemplate has no RowVer, so a
 // plain Prisma update is fine.
-export async function updateBlueprintTemplate(templateId: string, draft: TemplateDraft): Promise<UpdateBlueprintTemplateResult> {
+export async function updateBlueprintTemplate(
+  templateId: string,
+  draft: TemplateDraft,
+): Promise<UpdateBlueprintTemplateResult> {
+  const currentUser = await requireUser();
+
   let id: bigint;
   try {
     id = BigInt(templateId);
@@ -537,7 +739,9 @@ export async function updateBlueprintTemplate(templateId: string, draft: Templat
   const err = validateTemplateDraft(draft);
   if (err) return { ok: false, error: err };
 
-  const existing = await prisma.blueprintTemplate.findFirst({ where: { TemplateId: id, IsDeleted: false } });
+  const existing = await prisma.blueprintTemplate.findFirst({
+    where: { TemplateId: id, IsDeleted: false },
+  });
   if (!existing) return { ok: false, error: "Template not found." };
 
   const filterJson = buildFilterJsonFromDraft(draft);
@@ -545,10 +749,18 @@ export async function updateBlueprintTemplate(templateId: string, draft: Templat
   try {
     await prisma.blueprintTemplate.update({
       where: { TemplateId: id },
-      data: { Name: draft.name.trim(), FilterJson: JSON.stringify(filterJson), ModifiedBy: CURRENT_USER_ID, ModifiedOn: new Date() },
+      data: {
+        Name: draft.name.trim(),
+        FilterJson: JSON.stringify(filterJson),
+        ModifiedBy: currentUser.id,
+        ModifiedOn: new Date(),
+      },
     });
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : "Failed to update the template." };
+    return {
+      ok: false,
+      error: e instanceof Error ? e.message : "Failed to update the template.",
+    };
   }
 
   revalidatePath("/exam-templates");
@@ -565,14 +777,18 @@ export async function updateBlueprintTemplate(templateId: string, draft: Templat
 // loadDraftSectionContext below); publishing freezes it, matching how
 // updateMockTestFromDraft already freezes the exam's shape.
 
-export type PickerSearchInput = QuestionListFilters & { page: number; pageSize: number };
+export type PickerSearchInput = QuestionListFilters & {
+  page: number;
+  pageSize: number;
+};
 
 // Thin "use server" wrapper around data.ts's listQuestions — the picker
 // drawer is a client component, so it can only reach that read helper
 // through an actual server action, not a direct import.
 export async function searchPickerQuestions(
-  input: PickerSearchInput
+  input: PickerSearchInput,
 ): Promise<{ items: QuestionListItem[]; total: number }> {
+  await requireAuth();
   return listQuestions(input);
 }
 
@@ -581,13 +797,22 @@ export async function searchPickerQuestions(
 // size so a broad filter can't pull the whole bank into one response.
 export async function selectAllPickerQuestionIds(
   input: QuestionListFilters,
-  limit: number
+  limit: number,
 ): Promise<{ ids: string[]; total: number }> {
+  await requireAuth();
   return listQuestionIdsForFilter(input, Math.max(0, Math.min(limit, 2000)));
 }
 
 type DraftSectionContext =
-  | { ok: true; mockTestId: bigint; sectionId: bigint; pool: number; marks: number; negative: number }
+  | {
+      ok: true;
+      mockTestId: bigint;
+      sectionId: bigint;
+      pool: number;
+      marks: number;
+      negative: number;
+      currentUser: CurrentUser;
+    }
   | { ok: false; error: string };
 
 // Shared gate for every section-picks mutation below: the exam must exist,
@@ -596,7 +821,12 @@ type DraftSectionContext =
 // really belong to it. Also resolves the section's live marks/negative —
 // from PaperSection.RulesJson, not the recipe, since MockTestRecipe only
 // keeps pool/mandatory — which every caller below needs.
-async function loadDraftSectionContext(mockTestId: string, sectionId: string): Promise<DraftSectionContext> {
+async function loadDraftSectionContext(
+  mockTestId: string,
+  sectionId: string,
+): Promise<DraftSectionContext> {
+  const currentUser = await requireUser();
+
   let mtId: bigint;
   let secId: bigint;
   try {
@@ -606,22 +836,33 @@ async function loadDraftSectionContext(mockTestId: string, sectionId: string): P
     return { ok: false, error: "Invalid id." };
   }
 
-  const mockTest = await prisma.mockTest.findFirst({ where: { MockTestId: mtId, IsDeleted: false } });
+  const [mockTest, EXAM_STATUS] = await Promise.all([
+    prisma.mockTest.findFirst({
+      where: { MockTestId: mtId, IsDeleted: false },
+    }),
+    getExamStatus(),
+  ]);
   if (!mockTest) return { ok: false, error: "Exam not found." };
-  if (mockTest.Status !== MOCK_TEST_STATUS.DRAFT) return { ok: false, error: "Only draft exams can be edited." };
+  if (mockTest.Status !== EXAM_STATUS.DRAFT)
+    return { ok: false, error: "Only draft exams can be edited." };
 
   const section = await prisma.paperSection.findFirst({
     where: { SectionId: secId, PaperId: mockTest.PaperId, IsDeleted: false },
   });
   if (!section) return { ok: false, error: "Section not found on this exam." };
 
-  const parsedPolicy: unknown = mockTest.SelectionPolicyJson ? JSON.parse(mockTest.SelectionPolicyJson) : null;
+  const parsedPolicy: unknown = mockTest.SelectionPolicyJson
+    ? JSON.parse(mockTest.SelectionPolicyJson)
+    : null;
   const recipe: MockTestRecipe | null =
-    parsedPolicy && typeof parsedPolicy === "object" && Array.isArray((parsedPolicy as MockTestRecipe).sections)
+    parsedPolicy &&
+    typeof parsedPolicy === "object" &&
+    Array.isArray((parsedPolicy as MockTestRecipe).sections)
       ? (parsedPolicy as MockTestRecipe)
       : null;
   const recipeSection = recipe?.sections.find((s) => s.sectionId === sectionId);
-  if (!recipeSection) return { ok: false, error: "Section not found in this exam's recipe." };
+  if (!recipeSection)
+    return { ok: false, error: "Section not found in this exam's recipe." };
 
   let rules: { marks: number; negative: number };
   try {
@@ -637,10 +878,13 @@ async function loadDraftSectionContext(mockTestId: string, sectionId: string): P
     pool: recipeSection.pool,
     marks: rules.marks,
     negative: rules.negative,
+    currentUser,
   };
 }
 
-export type AddQuestionsResult = { ok: true; addedCount: number } | { ok: false; error: string };
+export type AddQuestionsResult =
+  | { ok: true; addedCount: number }
+  | { ok: false; error: string };
 
 // Appends picked questions to the end of the section's current order —
 // skips any already present (defense; the picker's own excludeQuestionIds
@@ -650,7 +894,7 @@ export type AddQuestionsResult = { ok: true; addedCount: number } | { ok: false;
 export async function addQuestionsToSection(
   mockTestId: string,
   sectionId: string,
-  questionIds: string[]
+  questionIds: string[],
 ): Promise<AddQuestionsResult> {
   const ctx = await loadDraftSectionContext(mockTestId, sectionId);
   if (!ctx.ok) return ctx;
@@ -683,18 +927,29 @@ export async function addQuestionsToSection(
   const activeRows = allSectionRows.filter((r) => !r.IsDeleted);
 
   if (questions.length !== idsBigInt.length) {
-    return { ok: false, error: "One or more selected questions could not be found." };
+    return {
+      ok: false,
+      error: "One or more selected questions could not be found.",
+    };
   }
 
   const alreadyPicked = new Set(activeRows.map((r) => r.QuestionId.toString()));
-  const toAdd = questions.filter((q) => !alreadyPicked.has(q.QuestionId.toString()));
+  const toAdd = questions.filter(
+    (q) => !alreadyPicked.has(q.QuestionId.toString()),
+  );
   if (!toAdd.length) {
-    return { ok: false, error: "The selected question(s) are already in this section." };
+    return {
+      ok: false,
+      error: "The selected question(s) are already in this section.",
+    };
   }
 
   const missingVersion = toAdd.find((q) => q.CurrentVersionId === null);
   if (missingVersion) {
-    return { ok: false, error: `Question ${missingVersion.Code} has no published content yet.` };
+    return {
+      ok: false,
+      error: `Question ${missingVersion.Code} has no published content yet.`,
+    };
   }
 
   const remainingSlots = ctx.pool - activeRows.length;
@@ -707,9 +962,16 @@ export async function addQuestionsToSection(
 
   // Preserve the order the caller selected them in.
   const orderById = new Map(uniqueIds.map((qid, i) => [qid, i]));
-  toAdd.sort((a, b) => (orderById.get(a.QuestionId.toString()) ?? 0) - (orderById.get(b.QuestionId.toString()) ?? 0));
+  toAdd.sort(
+    (a, b) =>
+      (orderById.get(a.QuestionId.toString()) ?? 0) -
+      (orderById.get(b.QuestionId.toString()) ?? 0),
+  );
 
-  const maxSeqNoEver = allSectionRows.reduce((max, r) => Math.max(max, r.SeqNo), 0);
+  const maxSeqNoEver = allSectionRows.reduce(
+    (max, r) => Math.max(max, r.SeqNo),
+    0,
+  );
 
   try {
     await prisma.$transaction(
@@ -723,13 +985,17 @@ export async function addQuestionsToSection(
             VersionId: q.CurrentVersionId!,
             EffectiveMarks: ctx.marks,
             EffectiveNegative: ctx.negative,
-            CreatedBy: CURRENT_USER_ID,
+            CreatedBy: ctx.currentUser.id,
+            FranchiseId: ctx.currentUser.franchiseId,
           },
-        })
-      )
+        }),
+      ),
     );
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : "Failed to add the question(s)." };
+    return {
+      ok: false,
+      error: e instanceof Error ? e.message : "Failed to add the question(s).",
+    };
   }
 
   revalidatePath(`/exam-designer/question-pick/${mockTestId}`);
@@ -738,7 +1004,9 @@ export async function addQuestionsToSection(
 
 export type SectionMutationResult = { ok: true } | { ok: false; error: string };
 
-export type RemoveQuestionsResult = { ok: true; removedCount: number } | { ok: false; error: string };
+export type RemoveQuestionsResult =
+  | { ok: true; removedCount: number }
+  | { ok: false; error: string };
 
 // Soft-delete only (single question or a bulk-checked batch — the picked
 // list's per-row remove button and its "select rows, remove selected"
@@ -753,7 +1021,7 @@ export type RemoveQuestionsResult = { ok: true; removedCount: number } | { ok: f
 export async function removeQuestionsFromSection(
   mockTestId: string,
   sectionId: string,
-  questionIds: string[]
+  questionIds: string[],
 ): Promise<RemoveQuestionsResult> {
   const ctx = await loadDraftSectionContext(mockTestId, sectionId);
   if (!ctx.ok) return ctx;
@@ -769,18 +1037,39 @@ export async function removeQuestionsFromSection(
   }
 
   const targets = await prisma.testQuestion.findMany({
-    where: { MockTestId: ctx.mockTestId, SectionId: ctx.sectionId, QuestionId: { in: idsBigInt }, IsDeleted: false },
+    where: {
+      MockTestId: ctx.mockTestId,
+      SectionId: ctx.sectionId,
+      QuestionId: { in: idsBigInt },
+      IsDeleted: false,
+    },
     select: { SeqNo: true },
   });
-  if (!targets.length) return { ok: false, error: "None of the selected question(s) were found in this section." };
+  if (!targets.length)
+    return {
+      ok: false,
+      error: "None of the selected question(s) were found in this section.",
+    };
 
   try {
     await prisma.testQuestion.updateMany({
-      where: { MockTestId: ctx.mockTestId, SectionId: ctx.sectionId, SeqNo: { in: targets.map((t) => t.SeqNo) } },
-      data: { IsDeleted: true, ModifiedBy: CURRENT_USER_ID, ModifiedOn: new Date() },
+      where: {
+        MockTestId: ctx.mockTestId,
+        SectionId: ctx.sectionId,
+        SeqNo: { in: targets.map((t) => t.SeqNo) },
+      },
+      data: {
+        IsDeleted: true,
+        ModifiedBy: ctx.currentUser.id,
+        ModifiedOn: new Date(),
+      },
     });
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : "Failed to remove the question(s)." };
+    return {
+      ok: false,
+      error:
+        e instanceof Error ? e.message : "Failed to remove the question(s).",
+    };
   }
 
   revalidatePath(`/exam-designer/question-pick/${mockTestId}`);
@@ -802,7 +1091,7 @@ export async function removeQuestionsFromSection(
 export async function reorderSectionQuestions(
   mockTestId: string,
   sectionId: string,
-  orderedQuestionIds: string[]
+  orderedQuestionIds: string[],
 ): Promise<SectionMutationResult> {
   const ctx = await loadDraftSectionContext(mockTestId, sectionId);
   if (!ctx.ok) return ctx;
@@ -815,24 +1104,40 @@ export async function reorderSectionQuestions(
 
   const isSamePickSet =
     orderedQuestionIds.length === activeRows.length &&
-    orderedQuestionIds.every((qid) => activeRows.some((r) => r.QuestionId.toString() === qid));
+    orderedQuestionIds.every((qid) =>
+      activeRows.some((r) => r.QuestionId.toString() === qid),
+    );
   if (!isSamePickSet) {
-    return { ok: false, error: "This section's question list is out of date — please refresh and try again." };
+    return {
+      ok: false,
+      error:
+        "This section's question list is out of date — please refresh and try again.",
+    };
   }
   if (!activeRows.length) return { ok: true };
 
   const floor = allSectionRows.reduce((min, r) => Math.min(min, r.SeqNo), 0);
-  const bumpedSeqNoByQuestionId = new Map(activeRows.map((r, i) => [r.QuestionId.toString(), floor - 1 - i]));
+  const bumpedSeqNoByQuestionId = new Map(
+    activeRows.map((r, i) => [r.QuestionId.toString(), floor - 1 - i]),
+  );
   const sortedSeqNos = activeRows.map((r) => r.SeqNo).sort((a, b) => a - b);
 
   try {
     await prisma.$transaction(
       activeRows.map((r) =>
         prisma.testQuestion.update({
-          where: { MockTestId_SectionId_SeqNo: { MockTestId: ctx.mockTestId, SectionId: ctx.sectionId, SeqNo: r.SeqNo } },
-          data: { SeqNo: bumpedSeqNoByQuestionId.get(r.QuestionId.toString())! },
-        })
-      )
+          where: {
+            MockTestId_SectionId_SeqNo: {
+              MockTestId: ctx.mockTestId,
+              SectionId: ctx.sectionId,
+              SeqNo: r.SeqNo,
+            },
+          },
+          data: {
+            SeqNo: bumpedSeqNoByQuestionId.get(r.QuestionId.toString())!,
+          },
+        }),
+      ),
     );
 
     await prisma.$transaction(
@@ -846,11 +1151,14 @@ export async function reorderSectionQuestions(
             },
           },
           data: { SeqNo: sortedSeqNos[i] },
-        })
-      )
+        }),
+      ),
     );
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : "Failed to reorder this section." };
+    return {
+      ok: false,
+      error: e instanceof Error ? e.message : "Failed to reorder this section.",
+    };
   }
 
   revalidatePath(`/exam-designer/question-pick/${mockTestId}`);

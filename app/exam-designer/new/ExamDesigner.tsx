@@ -12,7 +12,8 @@ import { createMockTestFromDraft, updateMockTestFromDraft } from "@/app/lib/exam
 import { notify } from "@/app/lib/toast";
 import { emptyTemplateDraft, filterJsonToTemplateDraft, validateShapeDraft, type TemplateDraft } from "@/app/lib/examSchema";
 import type { BlueprintTemplateListItem } from "@/app/lib/examData";
-import { MOCK_TEST_STATUS, MOCK_TEST_STATUS_LABELS } from "@/app/lib/examConstants";
+
+import { toValueRecord, type ServiceOption } from "@/app/lib/serviceOptions";
 
 // The flexible exam page: design from scratch or copy an existing template
 // (StartFromTemplateField handles that), decide the test kind (mock or
@@ -28,6 +29,7 @@ export default function ExamDesigner({
   initialDraft,
   initialStatus,
   pickedBySectionId,
+  examStatusOptions,
 }: {
   templates: BlueprintTemplateListItem[];
   testKinds: { code: string; name: string }[];
@@ -41,9 +43,13 @@ export default function ExamDesigner({
   // meaningful in edit mode, used to warn before saving a section down to a
   // pool smaller than what's already picked (see handleSubmit below).
   pickedBySectionId?: Record<string, number>;
+  examStatusOptions: ServiceOption[];
 }) {
+
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
+
+  const MOCK_TEST_STATUS = toValueRecord(examStatusOptions);
 
   const initialTemplate = initialTemplateId ? templates.find((t) => t.templateId === initialTemplateId) : undefined;
 
@@ -186,14 +192,19 @@ export default function ExamDesigner({
         pickedBySectionId={pickedBySectionId}
         statusSlot={
           isEdit && mockTestId && initialStatus !== undefined ? (
-            <MockTestStatusSelect mockTestId={mockTestId} examName={examName || "This exam"} status={initialStatus} />
+            <MockTestStatusSelect
+              mockTestId={mockTestId}
+              examName={examName || "This exam"}
+              status={initialStatus}
+              examStatusOptions={examStatusOptions}
+            />
           ) : (
             <AppSelectPicker
               value={createStatus}
               onChange={(v) => setCreateStatus(v ?? MOCK_TEST_STATUS.DRAFT)}
               cleanable={false}
               block
-              data={Object.entries(MOCK_TEST_STATUS_LABELS).map(([v, label]) => ({ label, value: Number(v) }))}
+              data={examStatusOptions.map((o) => ({ value: o.value, label: o.displayLabel }))}
             />
           )
         }

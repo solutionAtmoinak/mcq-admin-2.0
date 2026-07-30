@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { getMockTestDraftForEdit, listBlueprintTemplates, listTestKinds } from "@/app/lib/examData";
+import { getServiceOptions } from "@/app/lib/serviceConfig";
 import ExamDesigner from "@/app/exam-designer/new/ExamDesigner";
 
 export const metadata = { title: "Edit Exam · Question Bank" };
@@ -7,10 +8,11 @@ export const dynamic = "force-dynamic";
 
 export default async function EditMockTestPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const [data, templates, testKinds] = await Promise.all([
+  const [data, templates, testKinds, examStatusOptions] = await Promise.all([
     getMockTestDraftForEdit(id),
     listBlueprintTemplates(),
     listTestKinds(),
+    getServiceOptions("EXAM_STATUS"),
   ]);
   if (!data) notFound();
 
@@ -25,6 +27,7 @@ export default async function EditMockTestPage({ params }: { params: Promise<{ i
         initialDraft={data.draft}
         initialStatus={data.status}
         pickedBySectionId={data.pickedBySectionId}
+        examStatusOptions={examStatusOptions}
       />
     </div>
   );

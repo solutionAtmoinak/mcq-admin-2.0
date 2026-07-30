@@ -1,11 +1,17 @@
-import Link from "next/link";
 import { getBankSummary } from "@/app/lib/data";
-import { QUESTION_STATUS_LABELS } from "@/app/lib/constants";
+import { getServiceOptions } from "@/app/lib/serviceConfig";
+import { toLabelRecord } from "@/app/lib/serviceOptions";
+import Link from "next/link";
 
 export const dynamic = "force-dynamic";
 
 export default async function Home() {
-  const summary = await getBankSummary();
+
+  const [summary, questionStatusOptions] = await Promise.all([
+    getBankSummary(),
+    getServiceOptions("QUESTION_STATUS"),
+  ]);
+  const questionStatusLabels = toLabelRecord(questionStatusOptions);
 
   return (
     <div className="flex w-full flex-1 flex-col gap-6 px-6 py-10">
@@ -37,7 +43,7 @@ export default async function Home() {
         {summary.byStatus.map((s) => (
           <StatCard
             key={s.status}
-            label={QUESTION_STATUS_LABELS[s.status] ?? `Status ${s.status}`}
+            label={questionStatusLabels[s.status] ?? `Status ${s.status}`}
             value={s.count}
           />
         ))}

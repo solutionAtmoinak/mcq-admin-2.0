@@ -1,18 +1,20 @@
 "use server";
 
-import crypto from "node:crypto";
-import { revalidatePath } from "next/cache";
 import { Prisma } from "@/app/generated/prisma/client";
-import { prisma } from "@/app/lib/prisma";
-import { CURRENT_USER_ID, QUESTION_STATUS } from "@/app/lib/constants";
+import { requireAuth, requireUser, type CurrentUser } from "@/app/lib/auth";
 import { getQuestionForEdit } from "@/app/lib/data";
+import { prisma } from "@/app/lib/prisma";
 import {
-  type QuestionInput,
-  type TagPair,
-  validateQuestion,
   buildContent,
   buildSearchText,
+  validateQuestion,
+  type QuestionInput,
+  type TagPair,
 } from "@/app/lib/questionSchema";
+import { revalidatePath } from "next/cache";
+import crypto from "node:crypto";
+import { getServiceOptions } from "./serviceConfig";
+import { toValueRecord } from "./serviceOptions";
 
 // The tx param inside prisma.$transaction(async (tx) => ...) — extracted so
 // the tag-resolution helper below can be shared by create and update.
@@ -47,18 +49,29 @@ function generateLotNo(): string {
   return `LOT-${y}${m}${d}-${rand}`;
 }
 
+export async function getQuestionStatus() {
+  const s = await getServiceOptions("QUESTION_STATUS");
+  return toValueRecord(s);
+}
+
 // Mints a new lot the moment the Create Questions page loads (see
 // QuestionBankEditor's initial state). Every question saved afterwards during
 // that same browser-tab session — one row at a time or via "Save All" — is
 // tagged with this lot's id, so the whole batch can be found/reused as a
 // group later (surfaced read-only in Batch Default Settings).
 export async function createQuestionLot(): Promise<CreateQuestionLotResult> {
+  const currentUser = await requireUser();
+
   const ATTEMPTS = 5;
   for (let i = 0; i < ATTEMPTS; i++) {
     const lotNo = generateLotNo();
     try {
       const lot = await prisma.questionLot.create({
-        data: { LotNo: lotNo, CreatedBy: CURRENT_USER_ID },
+        data: {
+          LotNo: lotNo,
+          CreatedBy: currentUser.id,
+          FranchiseId: currentUser.franchiseId,
+        },
       });
       return { ok: true, lotId: lot.LotId.toString(), lotNo: lot.LotNo };
     } catch {
@@ -67,7 +80,10 @@ export async function createQuestionLot(): Promise<CreateQuestionLotResult> {
       // day), so a handful of attempts is more than enough headroom.
     }
   }
-  return { ok: false, error: "Could not generate a unique lot number. Please try again." };
+  return {
+    ok: false,
+    error: "Could not generate a unique lot number. Please try again.",
+  };
 }
 
 // Tag dimension `Code` is a unique, DB-friendly slug derived from whatever
@@ -86,7 +102,11 @@ function slugifyCode(input: string): string {
 // for every {key, value} pair across `tagLists` (one list per question).
 // Returns a map from "keyLower|valueLower" -> TagId. Shared by create and
 // update so a brand-new key/value used across a batch is only created once.
-async function resolveTagIds(tx: Tx, tagLists: TagPair[][]): Promise<Map<string, bigint>> {
+async function resolveTagIds(
+  tx: Tx,
+  tagLists: TagPair[][],
+  currentUser: CurrentUser,
+): Promise<Map<string, bigint>> {
   const uniqueKeyLowers = new Set<string>();
   const keyDisplayByLower = new Map<string, string>();
   const uniquePairs = new Map<string, { keyLower: string; value: string }>();
@@ -98,13 +118,19 @@ async function resolveTagIds(tx: Tx, tagLists: TagPair[][]): Promise<Map<string,
       if (!key || !value) continue;
       const keyLower = key.toLowerCase();
       uniqueKeyLowers.add(keyLower);
-      if (!keyDisplayByLower.has(keyLower)) keyDisplayByLower.set(keyLower, key);
-      uniquePairs.set(`${keyLower}|${value.toLowerCase()}`, { keyLower, value });
+      if (!keyDisplayByLower.has(keyLower))
+        keyDisplayByLower.set(keyLower, key);
+      uniquePairs.set(`${keyLower}|${value.toLowerCase()}`, {
+        keyLower,
+        value,
+      });
     }
   }
 
   // Dimensions have no rowversion column, so the normal query builder works fine here.
-  const existingDimensions = await tx.tagDimension.findMany({ where: { IsDeleted: false } });
+  const existingDimensions = await tx.tagDimension.findMany({
+    where: { IsDeleted: false },
+  });
   const dimensionByLower = new Map<string, { DimensionId: number }>();
   const existingCodesLower = new Set<string>();
   for (const d of existingDimensions) {
@@ -129,7 +155,12 @@ async function resolveTagIds(tx: Tx, tagLists: TagPair[][]): Promise<Map<string,
     }
     existingCodesLower.add(code);
     const createdDimension = await tx.tagDimension.create({
-      data: { Code: code, Name: displayName, CreatedBy: CURRENT_USER_ID },
+      data: {
+        Code: code,
+        Name: displayName,
+        CreatedBy: currentUser.id,
+        FranchiseId: currentUser.franchiseId,
+      },
     });
     dimensionIdByKeyLower.set(keyLower, createdDimension.DimensionId);
   }
@@ -142,7 +173,10 @@ async function resolveTagIds(tx: Tx, tagLists: TagPair[][]): Promise<Map<string,
     : [];
   const tagIdByDimAndNameLower = new Map<string, bigint>();
   for (const t of existingTags) {
-    tagIdByDimAndNameLower.set(`${t.DimensionId}|${t.Name.toLowerCase()}`, t.TagId);
+    tagIdByDimAndNameLower.set(
+      `${t.DimensionId}|${t.Name.toLowerCase()}`,
+      t.TagId,
+    );
   }
 
   const tagIdByPairKey = new Map<string, bigint>();
@@ -156,9 +190,9 @@ async function resolveTagIds(tx: Tx, tagLists: TagPair[][]): Promise<Map<string,
       // for this generator/adapter combo cannot build create plans for
       // ("does not match any query"). Reads work fine; writes go raw.
       const insertedTag = await tx.$queryRaw<{ TagId: bigint }[]>(
-        Prisma.sql`INSERT INTO dbo.Tag (DimensionId, Name, CreatedBy)
+        Prisma.sql`INSERT INTO dbo.Tag (DimensionId, Name, CreatedBy, FranchiseId)
           OUTPUT INSERTED.TagId
-          VALUES (${dimensionId}, ${info.value}, ${CURRENT_USER_ID})`
+          VALUES (${dimensionId}, ${info.value}, ${currentUser.id}, ${currentUser.franchiseId})`,
       );
       tagId = insertedTag[0].TagId;
       tagIdByDimAndNameLower.set(lookupKey, tagId);
@@ -169,13 +203,18 @@ async function resolveTagIds(tx: Tx, tagLists: TagPair[][]): Promise<Map<string,
   return tagIdByPairKey;
 }
 
-function resolveQuestionTagIds(tags: TagPair[], tagIdByPairKey: Map<string, bigint>): Set<bigint> {
+function resolveQuestionTagIds(
+  tags: TagPair[],
+  tagIdByPairKey: Map<string, bigint>,
+): Set<bigint> {
   const tagIds = new Set<bigint>();
   for (const t of tags) {
     const key = t.key.trim();
     const value = t.value.trim();
     if (!key || !value) continue;
-    const tagId = tagIdByPairKey.get(`${key.toLowerCase()}|${value.toLowerCase()}`);
+    const tagId = tagIdByPairKey.get(
+      `${key.toLowerCase()}|${value.toLowerCase()}`,
+    );
     if (tagId !== undefined) tagIds.add(tagId);
   }
   return tagIds;
@@ -183,13 +222,18 @@ function resolveQuestionTagIds(tags: TagPair[], tagIdByPairKey: Map<string, bigi
 
 export async function createQuestions(
   inputs: QuestionInput[],
-  lotId?: string | null
+  lotId?: string | null,
 ): Promise<CreateQuestionsResult> {
+  const currentUser = await requireUser();
+
   if (!inputs || inputs.length === 0) {
     return { ok: false, error: "No questions to create." };
   }
   if (inputs.length > 200) {
-    return { ok: false, error: "Please submit 200 questions or fewer at a time." };
+    return {
+      ok: false,
+      error: "Please submit 200 questions or fewer at a time.",
+    };
   }
 
   let lotIdBigInt: bigint | null = null;
@@ -201,16 +245,24 @@ export async function createQuestions(
     }
   }
 
+  const QUESTION_STATUS = await getQuestionStatus();
+  const validStatusValues = Object.values(QUESTION_STATUS);
+
   for (const [i, q] of inputs.entries()) {
-    const err = validateQuestion(q);
+    const err = validateQuestion(q, validStatusValues);
     if (err) return { ok: false, error: `Question ${i + 1}: ${err}` };
   }
 
-  const questionTypes = await prisma.questionType.findMany({ where: { IsDeleted: false } });
+  const questionTypes = await prisma.questionType.findMany({
+    where: { IsDeleted: false },
+  });
   const typeByCode = new Map(questionTypes.map((t) => [t.Code, t]));
   for (const [i, q] of inputs.entries()) {
     if (!typeByCode.has(q.typeCode)) {
-      return { ok: false, error: `Question ${i + 1}: unknown question type "${q.typeCode}".` };
+      return {
+        ok: false,
+        error: `Question ${i + 1}: unknown question type "${q.typeCode}".`,
+      };
     }
   }
 
@@ -218,23 +270,35 @@ export async function createQuestions(
     .map((q) => q.code?.trim())
     .filter((c): c is string => !!c);
   if (explicitCodes.length) {
-    const dupeInBatch = explicitCodes.filter((c, i) => explicitCodes.indexOf(c) !== i);
+    const dupeInBatch = explicitCodes.filter(
+      (c, i) => explicitCodes.indexOf(c) !== i,
+    );
     if (dupeInBatch.length) {
-      return { ok: false, error: `Duplicate code(s) in this batch: ${[...new Set(dupeInBatch)].join(", ")}` };
+      return {
+        ok: false,
+        error: `Duplicate code(s) in this batch: ${[...new Set(dupeInBatch)].join(", ")}`,
+      };
     }
     const existing = await prisma.question.findMany({
       where: { Code: { in: explicitCodes } },
       select: { Code: true },
     });
     if (existing.length) {
-      return { ok: false, error: `Code already exists: ${existing.map((e) => e.Code).join(", ")}` };
+      return {
+        ok: false,
+        error: `Code already exists: ${existing.map((e) => e.Code).join(", ")}`,
+      };
     }
   }
 
   const created: { code: string; questionId: string }[] = [];
 
   await prisma.$transaction(async (tx) => {
-    const tagIdByPairKey = await resolveTagIds(tx, inputs.map((q) => q.tags));
+    const tagIdByPairKey = await resolveTagIds(
+      tx,
+      inputs.map((q) => q.tags),
+      currentUser,
+    );
 
     for (const q of inputs) {
       const type = typeByCode.get(q.typeCode)!;
@@ -244,14 +308,14 @@ export async function createQuestions(
       const isApproved = q.status === QUESTION_STATUS.APPROVED;
       const insertedRows = isApproved
         ? await tx.$queryRaw<{ QuestionId: bigint }[]>(
-            Prisma.sql`INSERT INTO dbo.Question (Code, QuestionTypeId, Difficulty, Status, EstSolveSec, LotId, ApprovedBy, ApprovedOn, CreatedBy)
+            Prisma.sql`INSERT INTO dbo.Question (Code, QuestionTypeId, Difficulty, Status, EstSolveSec, LotId, ApprovedBy, ApprovedOn, CreatedBy, FranchiseId)
               OUTPUT INSERTED.QuestionId
-              VALUES (${code}, ${type.QuestionTypeId}, ${q.difficulty}, ${q.status}, ${q.estSolveSec ?? null}, ${lotIdBigInt}, ${CURRENT_USER_ID}, GETDATE(), ${CURRENT_USER_ID})`
+              VALUES (${code}, ${type.QuestionTypeId}, ${q.difficulty}, ${q.status}, ${q.estSolveSec ?? null}, ${lotIdBigInt}, ${currentUser.id}, GETDATE(), ${currentUser.id}, ${currentUser.franchiseId})`,
           )
         : await tx.$queryRaw<{ QuestionId: bigint }[]>(
-            Prisma.sql`INSERT INTO dbo.Question (Code, QuestionTypeId, Difficulty, Status, EstSolveSec, LotId, CreatedBy)
+            Prisma.sql`INSERT INTO dbo.Question (Code, QuestionTypeId, Difficulty, Status, EstSolveSec, LotId, CreatedBy, FranchiseId)
               OUTPUT INSERTED.QuestionId
-              VALUES (${code}, ${type.QuestionTypeId}, ${q.difficulty}, ${q.status}, ${q.estSolveSec ?? null}, ${lotIdBigInt}, ${CURRENT_USER_ID})`
+              VALUES (${code}, ${type.QuestionTypeId}, ${q.difficulty}, ${q.status}, ${q.estSolveSec ?? null}, ${lotIdBigInt}, ${currentUser.id}, ${currentUser.franchiseId})`,
           );
       const questionId = insertedRows[0].QuestionId;
 
@@ -273,20 +337,26 @@ export async function createQuestions(
           MetaJson: JSON.stringify({ source: "question-bank-ui" }),
           ContentHash: contentHash,
           ChangeNote: "Initial version",
-          CreatedBy: CURRENT_USER_ID,
+          CreatedBy: currentUser.id,
+          FranchiseId: currentUser.franchiseId,
         },
       });
 
       await tx.$executeRaw(
         Prisma.sql`UPDATE dbo.Question
-          SET CurrentVersionId = ${version.VersionId}, ModifiedBy = ${CURRENT_USER_ID}, ModifiedOn = GETDATE()
-          WHERE QuestionId = ${questionId}`
+          SET CurrentVersionId = ${version.VersionId}, ModifiedBy = ${currentUser.id}, ModifiedOn = GETDATE()
+          WHERE QuestionId = ${questionId}`,
       );
 
       const tagIds = resolveQuestionTagIds(q.tags, tagIdByPairKey);
       for (const tagId of tagIds) {
         await tx.questionTag.create({
-          data: { TagId: tagId, QuestionId: questionId, CreatedBy: CURRENT_USER_ID },
+          data: {
+            TagId: tagId,
+            QuestionId: questionId,
+            CreatedBy: currentUser.id,
+            FranchiseId: currentUser.franchiseId,
+          },
         });
       }
 
@@ -295,12 +365,17 @@ export async function createQuestions(
           QuestionId: questionId,
           Locale: "en",
           SearchText: buildSearchText(q),
-          CreatedBy: CURRENT_USER_ID,
+          CreatedBy: currentUser.id,
+          FranchiseId: currentUser.franchiseId,
         },
       });
 
       await tx.questionStat.create({
-        data: { QuestionId: questionId, CreatedBy: CURRENT_USER_ID },
+        data: {
+          QuestionId: questionId,
+          CreatedBy: currentUser.id,
+          FranchiseId: currentUser.franchiseId,
+        },
       });
 
       created.push({ code, questionId: questionId.toString() });
@@ -322,8 +397,10 @@ export async function createQuestions(
 export async function updateQuestion(
   questionId: string,
   input: QuestionInput,
-  changeNote?: string
+  changeNote?: string,
 ): Promise<UpdateQuestionResult> {
+  const currentUser = await requireUser();
+
   let id: bigint;
   try {
     id = BigInt(questionId);
@@ -331,14 +408,23 @@ export async function updateQuestion(
     return { ok: false, error: "Invalid question id." };
   }
 
-  const err = validateQuestion(input);
+  const questionStatusOptions = await getServiceOptions("QUESTION_STATUS");
+  const err = validateQuestion(
+    input,
+    questionStatusOptions.map((o) => o.value),
+  );
   if (err) return { ok: false, error: err };
 
-  const existing = await prisma.question.findFirst({ where: { QuestionId: id, IsDeleted: false } });
+  const existing = await prisma.question.findFirst({
+    where: { QuestionId: id, IsDeleted: false },
+  });
   if (!existing) return { ok: false, error: "Question not found." };
 
-  const type = await prisma.questionType.findFirst({ where: { Code: input.typeCode, IsDeleted: false } });
-  if (!type) return { ok: false, error: `Unknown question type "${input.typeCode}".` };
+  const type = await prisma.questionType.findFirst({
+    where: { Code: input.typeCode, IsDeleted: false },
+  });
+  if (!type)
+    return { ok: false, error: `Unknown question type "${input.typeCode}".` };
 
   const lastVersion = await prisma.questionVersion.findFirst({
     where: { QuestionId: id },
@@ -347,7 +433,7 @@ export async function updateQuestion(
   const nextVersionNo = (lastVersion?.VersionNo ?? 0) + 1;
 
   await prisma.$transaction(async (tx) => {
-    const tagIdByPairKey = await resolveTagIds(tx, [input.tags]);
+    const tagIdByPairKey = await resolveTagIds(tx, [input.tags], currentUser);
 
     const { presentation, answer } = buildContent(input);
     const presentationJson = JSON.stringify(presentation);
@@ -367,7 +453,8 @@ export async function updateQuestion(
         MetaJson: JSON.stringify({ source: "question-bank-ui" }),
         ContentHash: contentHash,
         ChangeNote: changeNote?.trim() || "Edited via question bank UI",
-        CreatedBy: CURRENT_USER_ID,
+        CreatedBy: currentUser.id,
+        FranchiseId: currentUser.franchiseId,
       },
     });
 
@@ -378,16 +465,21 @@ export async function updateQuestion(
             Difficulty = ${input.difficulty},
             EstSolveSec = ${input.estSolveSec ?? null},
             CurrentVersionId = ${version.VersionId},
-            ModifiedBy = ${CURRENT_USER_ID},
+            ModifiedBy = ${currentUser.id},
             ModifiedOn = GETDATE()
-        WHERE QuestionId = ${id}`
+        WHERE QuestionId = ${id}`,
     );
 
     await tx.questionTag.deleteMany({ where: { QuestionId: id } });
     const tagIds = resolveQuestionTagIds(input.tags, tagIdByPairKey);
     for (const tagId of tagIds) {
       await tx.questionTag.create({
-        data: { TagId: tagId, QuestionId: id, CreatedBy: CURRENT_USER_ID },
+        data: {
+          TagId: tagId,
+          QuestionId: id,
+          CreatedBy: currentUser.id,
+          FranchiseId: currentUser.franchiseId,
+        },
       });
     }
 
@@ -397,11 +489,12 @@ export async function updateQuestion(
         QuestionId: id,
         Locale: "en",
         SearchText: buildSearchText(input),
-        CreatedBy: CURRENT_USER_ID,
+        CreatedBy: currentUser.id,
+        FranchiseId: currentUser.franchiseId,
       },
       update: {
         SearchText: buildSearchText(input),
-        ModifiedBy: CURRENT_USER_ID,
+        ModifiedBy: currentUser.id,
         ModifiedOn: new Date(),
       },
     });
@@ -419,8 +512,10 @@ export async function updateQuestion(
 export async function changeQuestionStatus(
   questionId: string,
   toStatus: number,
-  comment?: string
+  comment?: string,
 ): Promise<ChangeStatusResult> {
+  const currentUser = await requireUser();
+
   let id: bigint;
   try {
     id = BigInt(questionId);
@@ -428,12 +523,16 @@ export async function changeQuestionStatus(
     return { ok: false, error: "Invalid question id." };
   }
 
+  const QUESTION_STATUS = await getQuestionStatus();
+
   const validStatuses = Object.values(QUESTION_STATUS) as number[];
   if (!validStatuses.includes(toStatus)) {
     return { ok: false, error: "Invalid status." };
   }
 
-  const existing = await prisma.question.findFirst({ where: { QuestionId: id, IsDeleted: false } });
+  const existing = await prisma.question.findFirst({
+    where: { QuestionId: id, IsDeleted: false },
+  });
   if (!existing) return { ok: false, error: "Question not found." };
   if (existing.Status === toStatus) {
     return { ok: false, error: "Question is already in that status." };
@@ -444,15 +543,15 @@ export async function changeQuestionStatus(
     if (toStatus === QUESTION_STATUS.APPROVED) {
       await tx.$executeRaw(
         Prisma.sql`UPDATE dbo.Question
-          SET Status = ${toStatus}, ApprovedBy = ${CURRENT_USER_ID}, ApprovedOn = GETDATE(),
-              ModifiedBy = ${CURRENT_USER_ID}, ModifiedOn = GETDATE()
-          WHERE QuestionId = ${id}`
+          SET Status = ${toStatus}, ApprovedBy = ${currentUser.id}, ApprovedOn = GETDATE(),
+              ModifiedBy = ${currentUser.id}, ModifiedOn = GETDATE()
+          WHERE QuestionId = ${id}`,
       );
     } else {
       await tx.$executeRaw(
         Prisma.sql`UPDATE dbo.Question
-          SET Status = ${toStatus}, ModifiedBy = ${CURRENT_USER_ID}, ModifiedOn = GETDATE()
-          WHERE QuestionId = ${id}`
+          SET Status = ${toStatus}, ModifiedBy = ${currentUser.id}, ModifiedOn = GETDATE()
+          WHERE QuestionId = ${id}`,
       );
     }
 
@@ -464,7 +563,8 @@ export async function changeQuestionStatus(
           FromStatus: existing.Status,
           ToStatus: toStatus,
           Comment: comment?.trim() || null,
-          CreatedBy: CURRENT_USER_ID,
+          CreatedBy: currentUser.id,
+          FranchiseId: currentUser.franchiseId,
         },
       });
     }
@@ -480,7 +580,11 @@ export async function changeQuestionStatus(
 // Soft delete only: flips IsDeleted so the question drops out of every
 // IsDeleted:false query (list, edit, reference lookups) without losing the
 // row's history (versions, tags, review actions).
-export async function deleteQuestion(questionId: string): Promise<DeleteQuestionResult> {
+export async function deleteQuestion(
+  questionId: string,
+): Promise<DeleteQuestionResult> {
+  const currentUser = await requireUser();
+
   let id: bigint;
   try {
     id = BigInt(questionId);
@@ -488,14 +592,16 @@ export async function deleteQuestion(questionId: string): Promise<DeleteQuestion
     return { ok: false, error: "Invalid question id." };
   }
 
-  const existing = await prisma.question.findFirst({ where: { QuestionId: id, IsDeleted: false } });
+  const existing = await prisma.question.findFirst({
+    where: { QuestionId: id, IsDeleted: false },
+  });
   if (!existing) return { ok: false, error: "Question not found." };
 
   // NOTE: Question has a rowversion column — see resolveTagIds comment above.
   await prisma.$executeRaw(
     Prisma.sql`UPDATE dbo.Question
-      SET IsDeleted = 1, ModifiedBy = ${CURRENT_USER_ID}, ModifiedOn = GETDATE()
-      WHERE QuestionId = ${id}`
+      SET IsDeleted = 1, ModifiedBy = ${currentUser.id}, ModifiedOn = GETDATE()
+      WHERE QuestionId = ${id}`,
   );
 
   revalidatePath("/questions");
@@ -510,7 +616,11 @@ export type DuplicateSourceResult =
 
 // Used by the Create Questions page's "Saved earlier today" panel to pull a
 // previously-saved question's content into a new, editable (unsaved) row.
-export async function getQuestionInputForDuplicate(questionId: string): Promise<DuplicateSourceResult> {
+export async function getQuestionInputForDuplicate(
+  questionId: string,
+): Promise<DuplicateSourceResult> {
+  await requireAuth();
+
   const existing = await getQuestionForEdit(questionId);
   if (!existing) return { ok: false, error: "Question not found." };
   return { ok: true, input: existing.input };
