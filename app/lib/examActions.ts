@@ -4,7 +4,7 @@ import crypto from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { Prisma } from "@/app/generated/prisma/client";
 import { prisma } from "@/app/lib/prisma";
-import { requireAuth, requireUser, type CurrentUser } from "@/app/lib/auth";
+import { requireUser, type CurrentUser } from "@/app/lib/auth";
 import {
   listQuestionIdsForFilter,
   listQuestions,
@@ -344,7 +344,7 @@ export async function updateMockTestFromDraft(
 
   const [existing, EXAM_STATUS] = await Promise.all([
     prisma.mockTest.findFirst({
-      where: { MockTestId: id, IsDeleted: false },
+      where: { MockTestId: id, IsDeleted: false, FranchiseId: currentUser.franchiseId },
     }),
     getExamStatus(),
   ]);
@@ -572,7 +572,7 @@ export async function changeMockTestStatus(
     return { ok: false, error: "Invalid status." };
 
   const existing = await prisma.mockTest.findFirst({
-    where: { MockTestId: id, IsDeleted: false },
+    where: { MockTestId: id, IsDeleted: false, FranchiseId: currentUser.franchiseId },
   });
   if (!existing) return { ok: false, error: "Exam not found." };
   if (existing.Status === toStatus)
@@ -660,7 +660,7 @@ export async function deleteMockTest(
   }
 
   const existing = await prisma.mockTest.findFirst({
-    where: { MockTestId: id, IsDeleted: false },
+    where: { MockTestId: id, IsDeleted: false, FranchiseId: currentUser.franchiseId },
   });
   if (!existing) return { ok: false, error: "Exam not found." };
 
@@ -739,8 +739,11 @@ export async function updateBlueprintTemplate(
   const err = validateTemplateDraft(draft);
   if (err) return { ok: false, error: err };
 
+  // Strict ownership, same rule as getBlueprintTemplateForEdit — a master
+  // template can only be updated by master, and no franchise (master
+  // included) can update another franchise's template.
   const existing = await prisma.blueprintTemplate.findFirst({
-    where: { TemplateId: id, IsDeleted: false },
+    where: { TemplateId: id, IsDeleted: false, FranchiseId: currentUser.franchiseId },
   });
   if (!existing) return { ok: false, error: "Template not found." };
 
@@ -788,7 +791,6 @@ export type PickerSearchInput = QuestionListFilters & {
 export async function searchPickerQuestions(
   input: PickerSearchInput,
 ): Promise<{ items: QuestionListItem[]; total: number }> {
-  await requireAuth();
   return listQuestions(input);
 }
 
@@ -799,7 +801,6 @@ export async function selectAllPickerQuestionIds(
   input: QuestionListFilters,
   limit: number,
 ): Promise<{ ids: string[]; total: number }> {
-  await requireAuth();
   return listQuestionIdsForFilter(input, Math.max(0, Math.min(limit, 2000)));
 }
 
@@ -838,7 +839,7 @@ async function loadDraftSectionContext(
 
   const [mockTest, EXAM_STATUS] = await Promise.all([
     prisma.mockTest.findFirst({
-      where: { MockTestId: mtId, IsDeleted: false },
+      where: { MockTestId: mtId, IsDeleted: false, FranchiseId: currentUser.franchiseId },
     }),
     getExamStatus(),
   ]);

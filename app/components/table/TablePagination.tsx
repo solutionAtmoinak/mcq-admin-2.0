@@ -101,11 +101,19 @@ export function TablePagination({
             <span key={`ellipsis-${i}`} className="px-1 text-zinc-400">
               …
             </span>
+          ) : p === page ? (
+            // Current page: no Link. A Link here would sit inside this
+            // (fully dynamic, uncached) route's Suspense boundary, remount
+            // on every navigation, and immediately re-prefetch the exact
+            // URL already on screen — see TablePagination self-link loop.
+            <span key={p} className={`${pillClass} bg-zinc-900 text-white`} aria-current="page">
+              {p}
+            </span>
           ) : (
             <Link
               key={p}
               href={hrefFor({ page: String(p) })}
-              className={`${pillClass} ${p === page ? "bg-zinc-900 text-white" : "text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900"}`}
+              className={`${pillClass} text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900`}
             >
               {p}
             </Link>

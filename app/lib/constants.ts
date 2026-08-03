@@ -16,3 +16,8 @@ export const QUESTION_STATUS_BADGE: Record<number, string> = {
 };
 
 export const PAGE_SIZE_OPTIONS = [20, 50, 100] as const;
+
+// Franchise 1 is the master/HQ franchise. Its own content (currently just
+// BlueprintTemplate — see examData.ts/examActions.ts) is reusable by every
+// other franchise, but only franchise 1 itself may edit it.
+export const MASTER_FRANCHISE_ID = BigInt(1);

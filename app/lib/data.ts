@@ -1,5 +1,5 @@
 import { prisma } from "@/app/lib/prisma";
-import { requireAuth } from "@/app/lib/auth";
+import { requireAuth, requireUser } from "@/app/lib/auth";
 import { getServiceOptions } from "@/app/lib/serviceConfig";
 import type {
   ReferenceData,
@@ -55,23 +55,26 @@ export type BankSummary = {
 };
 
 export async function getBankSummary(): Promise<BankSummary> {
-  await requireAuth();
+  const currentUser = await requireUser();
 
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  const franchiseId = currentUser.franchiseId;
 
   const [total, recentCount, byStatusRaw, types] = await Promise.all([
-    prisma.question.count({ where: { IsDeleted: false } }),
-    prisma.question.count({ where: { IsDeleted: false, CreatedOn: { gte: sevenDaysAgo } } }),
+    prisma.question.count({ where: { IsDeleted: false, FranchiseId: franchiseId } }),
+    prisma.question.count({
+      where: { IsDeleted: false, FranchiseId: franchiseId, CreatedOn: { gte: sevenDaysAgo } },
+    }),
     prisma.question.groupBy({
       by: ["Status"],
-      where: { IsDeleted: false },
+      where: { IsDeleted: false, FranchiseId: franchiseId },
       _count: { _all: true },
     }),
     prisma.questionType.findMany({
       where: { IsDeleted: false },
       orderBy: { QuestionTypeId: "asc" },
       include: {
-        _count: { select: { Question: { where: { IsDeleted: false } } } },
+        _count: { select: { Question: { where: { IsDeleted: false, FranchiseId: franchiseId } } } },
       },
     }),
   ]);
@@ -115,8 +118,10 @@ export type QuestionListFilters = {
 
 // Shared by listQuestions (paginated rows) and listQuestionIdsForFilter
 // (bare id list for "select all matching") so the two can never drift apart
-// on what counts as a match.
-function buildQuestionWhere(filters: QuestionListFilters) {
+// on what counts as a match. Every caller scopes this to the requesting
+// user's own franchise — a franchise only ever sees questions created at
+// that franchise.
+function buildQuestionWhere(filters: QuestionListFilters, franchiseId: bigint | null) {
   // An unparseable lotId (shouldn't happen — the filter is always populated
   // from listQuestionLots' own ids — but a garbage value should still match
   // nothing rather than silently ignoring the filter) collapses to an id no
@@ -132,6 +137,7 @@ function buildQuestionWhere(filters: QuestionListFilters) {
 
   return {
     IsDeleted: false,
+    FranchiseId: franchiseId,
     ...(filters.typeId ? { QuestionTypeId: filters.typeId } : {}),
     ...(filters.difficulty ? { Difficulty: filters.difficulty } : {}),
     ...(filters.status !== undefined ? { Status: filters.status } : {}),
@@ -162,9 +168,9 @@ function buildQuestionWhere(filters: QuestionListFilters) {
 export async function listQuestions(
   filters: QuestionListFilters & { page: number; pageSize: number }
 ): Promise<{ items: QuestionListItem[]; total: number }> {
-  await requireAuth();
+  const currentUser = await requireUser();
 
-  const where = buildQuestionWhere(filters);
+  const where = buildQuestionWhere(filters, currentUser.franchiseId);
 
   const [rows, total] = await Promise.all([
     prisma.question.findMany({
@@ -217,9 +223,9 @@ export async function listQuestionIdsForFilter(
   filters: QuestionListFilters,
   limit: number
 ): Promise<{ ids: string[]; total: number }> {
-  await requireAuth();
+  const currentUser = await requireUser();
 
-  const where = buildQuestionWhere(filters);
+  const where = buildQuestionWhere(filters, currentUser.franchiseId);
 
   const [rows, total] = await Promise.all([
     prisma.question.findMany({
@@ -246,14 +252,14 @@ export type QuestionLotOption = {
 // (each "Create Questions" browser session mints its own lot) are what an
 // admin is almost always looking for.
 export async function listQuestionLots(): Promise<QuestionLotOption[]> {
-  await requireAuth();
+  const currentUser = await requireUser();
 
   const lots = await prisma.questionLot.findMany({
-    where: { IsDeleted: false },
+    where: { IsDeleted: false, FranchiseId: currentUser.franchiseId },
     orderBy: { CreatedOn: "desc" },
     take: 200,
     include: {
-      _count: { select: { Question: { where: { IsDeleted: false } } } },
+      _count: { select: { Question: { where: { IsDeleted: false, FranchiseId: currentUser.franchiseId } } } },
     },
   });
 
@@ -279,13 +285,13 @@ export type TodayQuestionItem = {
 // questions already saved today, so freshly-created ones show up alongside
 // the in-progress rows still being edited in the current session.
 export async function getTodayQuestions(limit = 50): Promise<TodayQuestionItem[]> {
-  await requireAuth();
+  const currentUser = await requireUser();
 
   const startOfDay = new Date();
   startOfDay.setHours(0, 0, 0, 0);
 
   const rows = await prisma.question.findMany({
-    where: { IsDeleted: false, CreatedOn: { gte: startOfDay } },
+    where: { IsDeleted: false, FranchiseId: currentUser.franchiseId, CreatedOn: { gte: startOfDay } },
     orderBy: { CreatedOn: "desc" },
     take: limit,
     include: {
@@ -327,7 +333,7 @@ export type EditableQuestion = {
 };
 
 export async function getQuestionForEdit(questionId: string): Promise<EditableQuestion | null> {
-  await requireAuth();
+  const currentUser = await requireUser();
 
   let id: bigint;
   try {
@@ -337,7 +343,7 @@ export async function getQuestionForEdit(questionId: string): Promise<EditableQu
   }
 
   const q = await prisma.question.findFirst({
-    where: { QuestionId: id, IsDeleted: false },
+    where: { QuestionId: id, IsDeleted: false, FranchiseId: currentUser.franchiseId },
     include: {
       QuestionType: true,
       QuestionVersion_Question_CurrentVersionIdToQuestionVersion: true,

@@ -1,7 +1,7 @@
 "use server";
 
 import { Prisma } from "@/app/generated/prisma/client";
-import { requireAuth, requireUser, type CurrentUser } from "@/app/lib/auth";
+import { requireUser, type CurrentUser } from "@/app/lib/auth";
 import { getQuestionForEdit } from "@/app/lib/data";
 import { prisma } from "@/app/lib/prisma";
 import {
@@ -416,7 +416,7 @@ export async function updateQuestion(
   if (err) return { ok: false, error: err };
 
   const existing = await prisma.question.findFirst({
-    where: { QuestionId: id, IsDeleted: false },
+    where: { QuestionId: id, IsDeleted: false, FranchiseId: currentUser.franchiseId },
   });
   if (!existing) return { ok: false, error: "Question not found." };
 
@@ -531,7 +531,7 @@ export async function changeQuestionStatus(
   }
 
   const existing = await prisma.question.findFirst({
-    where: { QuestionId: id, IsDeleted: false },
+    where: { QuestionId: id, IsDeleted: false, FranchiseId: currentUser.franchiseId },
   });
   if (!existing) return { ok: false, error: "Question not found." };
   if (existing.Status === toStatus) {
@@ -593,7 +593,7 @@ export async function deleteQuestion(
   }
 
   const existing = await prisma.question.findFirst({
-    where: { QuestionId: id, IsDeleted: false },
+    where: { QuestionId: id, IsDeleted: false, FranchiseId: currentUser.franchiseId },
   });
   if (!existing) return { ok: false, error: "Question not found." };
 
@@ -619,8 +619,6 @@ export type DuplicateSourceResult =
 export async function getQuestionInputForDuplicate(
   questionId: string,
 ): Promise<DuplicateSourceResult> {
-  await requireAuth();
-
   const existing = await getQuestionForEdit(questionId);
   if (!existing) return { ok: false, error: "Question not found." };
   return { ok: true, input: existing.input };

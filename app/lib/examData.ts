@@ -1,5 +1,6 @@
 import { prisma } from "@/app/lib/prisma";
-import { requireAuth } from "@/app/lib/auth";
+import { requireUser } from "@/app/lib/auth";
+import { MASTER_FRANCHISE_ID } from "@/app/lib/constants";
 import {
   buildTemplateDraftFromExam,
   filterJsonToTemplateDraft,
@@ -15,19 +16,36 @@ export type BlueprintTemplateListItem = {
   templateId: string;
   name: string;
   filterJson: BlueprintFilterJson;
+  // Whether the requesting franchise owns this row and may edit it — false
+  // for master-franchise templates picked up through the reuse fallback
+  // below. The templates list/picker UI uses this to hide the Edit action.
+  isOwner: boolean;
 };
 
+// Every franchise sees its own templates. Non-master franchises additionally
+// see (read-only) the master franchise's templates, so they can be reused as
+// a starting point for a new exam — but master's own templates are only
+// ever editable by master (see getBlueprintTemplateForEdit), and master
+// itself only sees its own (it never sees another franchise's templates).
 export async function listBlueprintTemplates(): Promise<BlueprintTemplateListItem[]> {
-  await requireAuth();
+  const currentUser = await requireUser();
+  const isMaster = currentUser.franchiseId === MASTER_FRANCHISE_ID;
 
   const rows = await prisma.blueprintTemplate.findMany({
-    where: { IsDeleted: false, IsActive: true },
+    where: isMaster
+      ? { IsDeleted: false, IsActive: true, FranchiseId: MASTER_FRANCHISE_ID }
+      : {
+          IsDeleted: false,
+          IsActive: true,
+          OR: [{ FranchiseId: currentUser.franchiseId }, { FranchiseId: MASTER_FRANCHISE_ID }],
+        },
     orderBy: { CreatedOn: "desc" },
   });
   return rows.map((r) => ({
     templateId: r.TemplateId.toString(),
     name: r.Name,
     filterJson: parseBlueprintFilterJson(r.FilterJson),
+    isOwner: r.FranchiseId === currentUser.franchiseId,
   }));
 }
 
@@ -42,8 +60,11 @@ export type BlueprintTemplateDraftForEdit = {
 // also used for the "copy" flow on the exam page, where a copy needs its
 // own name) — restore the template's own name here since this is editing
 // that exact row, not spinning off a new one.
+// Strict ownership only — no master-franchise fallback here, unlike
+// listBlueprintTemplates. A master template may only be edited by master,
+// and master may not edit (or even open) another franchise's template.
 export async function getBlueprintTemplateForEdit(templateId: string): Promise<BlueprintTemplateDraftForEdit | null> {
-  await requireAuth();
+  const currentUser = await requireUser();
 
   let id: bigint;
   try {
@@ -52,7 +73,9 @@ export async function getBlueprintTemplateForEdit(templateId: string): Promise<B
     return null;
   }
 
-  const row = await prisma.blueprintTemplate.findFirst({ where: { TemplateId: id, IsDeleted: false } });
+  const row = await prisma.blueprintTemplate.findFirst({
+    where: { TemplateId: id, IsDeleted: false, FranchiseId: currentUser.franchiseId },
+  });
   if (!row) return null;
 
   const filterJson = parseBlueprintFilterJson(row.FilterJson);
@@ -62,7 +85,7 @@ export async function getBlueprintTemplateForEdit(templateId: string): Promise<B
 }
 
 export async function listTestKinds(): Promise<{ code: string; name: string }[]> {
-  await requireAuth();
+  await requireUser();
 
   const rows = await prisma.testKind.findMany({
     where: { IsDeleted: false },
@@ -85,9 +108,9 @@ export type MockTestListItem = {
 };
 
 export async function listMockTests(opts: { page: number; pageSize: number }): Promise<{ items: MockTestListItem[]; total: number }> {
-  await requireAuth();
+  const currentUser = await requireUser();
 
-  const where = { IsDeleted: false };
+  const where = { IsDeleted: false, FranchiseId: currentUser.franchiseId };
   const [rows, total, examStatusOptions] = await Promise.all([
     prisma.mockTest.findMany({
       where,
@@ -156,7 +179,7 @@ export type MockTestDetail = {
 };
 
 export async function getMockTestForEdit(mockTestId: string): Promise<MockTestDetail | null> {
-  await requireAuth();
+  const currentUser = await requireUser();
 
   let id: bigint;
   try {
@@ -167,7 +190,7 @@ export async function getMockTestForEdit(mockTestId: string): Promise<MockTestDe
 
   const [row, examStatusOptions] = await Promise.all([
     prisma.mockTest.findFirst({
-      where: { MockTestId: id, IsDeleted: false },
+      where: { MockTestId: id, IsDeleted: false, FranchiseId: currentUser.franchiseId },
       include: { ExamPaper: { select: { Name: true, TotalMarks: true, DurationMin: true } } },
     }),
     getServiceOptions("EXAM_STATUS"),
@@ -299,7 +322,7 @@ export type MockTestDraftForEdit = {
 // reshapes them into the same TemplateDraft the designer already knows how
 // to render and validate.
 export async function getMockTestDraftForEdit(mockTestId: string): Promise<MockTestDraftForEdit | null> {
-  await requireAuth();
+  const currentUser = await requireUser();
 
   let id: bigint;
   try {
@@ -309,7 +332,7 @@ export async function getMockTestDraftForEdit(mockTestId: string): Promise<MockT
   }
 
   const row = await prisma.mockTest.findFirst({
-    where: { MockTestId: id, IsDeleted: false },
+    where: { MockTestId: id, IsDeleted: false, FranchiseId: currentUser.franchiseId },
     include: {
       ExamPaper: {
         include: {

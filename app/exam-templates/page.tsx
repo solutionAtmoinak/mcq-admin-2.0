@@ -31,9 +31,13 @@ export default async function TemplatesPage() {
                   </div>
                 </div>
                 <div className="flex gap-2">
-                  <Link href={`/exam-templates/${t.templateId}`} className={buttonClass}>
-                    Edit
-                  </Link>
+                  {t.isOwner ? (
+                    <Link href={`/exam-templates/${t.templateId}`} className={buttonClass}>
+                      Edit
+                    </Link>
+                  ) : (
+                    <span className="self-center text-xs text-zinc-400">Master template · reuse only</span>
+                  )}
                 </div>
               </div>
             </div>

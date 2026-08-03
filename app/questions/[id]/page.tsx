@@ -4,6 +4,7 @@ import { getQuestionForEdit, getReferenceData } from "@/app/lib/data";
 import QuestionEditForm from "./QuestionEditForm";
 
 export const metadata = { title: "Question · Question Bank" };
+export const dynamic = "force-dynamic";
 
 export default async function QuestionDetailPage({
   params,

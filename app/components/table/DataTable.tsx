@@ -12,8 +12,8 @@ export function DataTable({
   pagination: TablePaginationProps;
 }) {
   return (
-    <div className="overflow-hidden rounded-xl border border-zinc-200 shadow-sm">
-      <div className="overflow-x-auto">{children}</div>
+    <div className="flex flex-col overflow-hidden rounded-xl border border-zinc-200 shadow-sm">
+      <div className="max-h-[65vh] overflow-auto">{children}</div>
       <TablePagination {...pagination} />
     </div>
   );

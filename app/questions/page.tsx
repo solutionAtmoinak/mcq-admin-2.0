@@ -11,6 +11,7 @@ import Link from "next/link";
 import { FiSearch } from "react-icons/fi";
 
 export const metadata = { title: "Question Bank" };
+export const dynamic = "force-dynamic";
 
 const DEFAULT_PAGE_SIZE = 20;
 
@@ -141,7 +142,7 @@ export default async function QuestionsPage({
         }}
       >
         <table className="w-full text-left text-sm">
-          <thead className="bg-zinc-50 text-xs uppercase text-zinc-500">
+          <thead className="sticky top-0 z-10 bg-zinc-50 text-xs uppercase text-zinc-500">
             <tr>
               <th className="px-4 py-2">Code</th>
               <th className="px-4 py-2">Stem</th>
