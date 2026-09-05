@@ -1,6 +1,7 @@
 import { prisma } from "@/app/lib/prisma";
 import { requireAuth, requireUser } from "@/app/lib/auth";
 import { getServiceOptions } from "@/app/lib/serviceConfig";
+import type { AttachedMedia } from "@/app/lib/media";
 import type {
   ReferenceData,
   ReferenceTagOption,
@@ -354,7 +355,12 @@ export async function getQuestionForEdit(questionId: string): Promise<EditableQu
   if (!q) return null;
 
   const version = q.QuestionVersion_Question_CurrentVersionIdToQuestionVersion;
-  let presentation: { stem?: string; options?: { id: string; text: string }[]; responseType?: string } = {};
+  let presentation: {
+    stem?: string;
+    media?: AttachedMedia;
+    options?: { id: string; text: string; media?: AttachedMedia }[];
+    responseType?: string;
+  } = {};
   let answer: { correct?: string[] | number | string; marks?: number; negative?: number; explanation?: string } = {};
   if (version) {
     try {
@@ -379,6 +385,7 @@ export async function getQuestionForEdit(questionId: string): Promise<EditableQu
     status: q.Status,
     estSolveSec: q.EstSolveSec,
     stem: presentation.stem ?? "",
+    media: presentation.media ?? null,
     options: isOptionBased && presentation.options ? presentation.options : undefined,
     correctOptionIds: isOptionBased && Array.isArray(answer.correct) ? answer.correct : [],
     correctValue: !isOptionBased && answer.correct !== undefined ? String(answer.correct) : "",

@@ -2,11 +2,13 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
+import { FiImage, FiMusic, FiPaperclip, FiVideo } from "react-icons/fi";
 import { updateQuestion } from "@/app/lib/actions";
 import {
   QUESTION_TYPE_LABELS,
   isOptionBasedType,
   validateQuestion,
+  type OptionInput,
   type QuestionInput,
   type ReferenceData,
   type TagPair,
@@ -14,14 +16,25 @@ import {
 import { TagPairEditor } from "@/app/components/TagPairEditor";
 import StatusChanger from "@/app/components/StatusChanger";
 import { AppSelectPicker } from "@/app/components/AppSelectPicker";
+import { MediaAttachmentField } from "@/app/components/MediaAttachmentField";
+import OptionMediaModal from "@/app/components/OptionMediaModal";
 import {
   inputClass,
   labelClass,
   cardClass,
   buttonClass,
   primaryButtonClass,
+  savedIconTextButtonClass,
   sectionLabelClass,
 } from "@/app/components/ui";
+
+const OPTION_MEDIA_ICON = {
+  image: FiImage,
+  audio: FiMusic,
+  video: FiVideo,
+  document: FiPaperclip,
+  attach: FiPaperclip,
+} as const;
 
 // The question's whole detail page IS this form: every field arrives
 // pre-populated and can be edited in place. Saving creates a new
@@ -46,13 +59,14 @@ export default function QuestionEditForm({
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [isPending, startTransition] = useTransition();
+  const [mediaOptionIndex, setMediaOptionIndex] = useState<number | null>(null);
 
   function update(patch: Partial<QuestionInput>) {
     setSaved(false);
     setData((d) => ({ ...d, ...patch }));
   }
 
-  function updateOption(index: number, patch: Partial<{ id: string; text: string }>) {
+  function updateOption(index: number, patch: Partial<OptionInput>) {
     setSaved(false);
     setData((d) => ({
       ...d,
@@ -145,6 +159,7 @@ export default function QuestionEditForm({
 
   const optionBased = isOptionBasedType(data.typeCode);
   const isDirty = JSON.stringify(data) !== JSON.stringify(initialInput);
+  const mediaOption = mediaOptionIndex !== null ? data.options[mediaOptionIndex] : undefined;
 
   return (
     <div className="flex flex-col gap-6">
@@ -202,10 +217,11 @@ export default function QuestionEditForm({
               <div className="flex flex-col gap-2">
                 {data.options.map((opt, i) => {
                   const isCorrect = data.correctOptionIds.includes(opt.id);
+                  const MediaIcon = OPTION_MEDIA_ICON[opt.media?.kind ?? "attach"];
                   return (
                     <div
                       key={i}
-                      className={`grid grid-cols-[auto_2.75rem_1fr_auto] items-center gap-2 rounded-md px-2 py-1.5 transition-colors ${
+                      className={`grid grid-cols-[auto_2.75rem_1fr_auto_auto] items-center gap-2 rounded-md px-2 py-1.5 transition-colors ${
                         isCorrect ? "bg-emerald-50" : ""
                       }`}
                     >
@@ -231,6 +247,15 @@ export default function QuestionEditForm({
                         onChange={(e) => updateOption(i, { text: e.target.value })}
                         placeholder="Option text"
                       />
+                      <button
+                        type="button"
+                        className={opt.media ? savedIconTextButtonClass : buttonClass}
+                        onClick={() => setMediaOptionIndex(i)}
+                        aria-label={`Attach media to option ${opt.id}`}
+                        title={opt.media ? `${opt.media.kind} attached` : "Attach image, audio or video"}
+                      >
+                        <MediaIcon size={13} />
+                      </button>
                       <button
                         className={buttonClass}
                         onClick={() => removeOption(i)}
@@ -313,6 +338,11 @@ export default function QuestionEditForm({
           </section>
 
           <section className={cardClass}>
+            <h2 className={sectionLabelClass}>Media</h2>
+            <MediaAttachmentField media={data.media} onChange={(media) => update({ media })} />
+          </section>
+
+          <section className={cardClass}>
             <h2 className={sectionLabelClass}>Tags</h2>
             <TagPairEditor
               tags={data.tags}
@@ -362,6 +392,16 @@ export default function QuestionEditForm({
         </button>
         {isDirty && <span className="text-xs text-amber-600">Unsaved changes</span>}
       </div>
+
+      {mediaOption && (
+        <OptionMediaModal
+          open={mediaOptionIndex !== null}
+          onClose={() => setMediaOptionIndex(null)}
+          optionLabel={`Option ${mediaOption.id}`}
+          media={mediaOption.media}
+          onChange={(media) => updateOption(mediaOptionIndex!, { media })}
+        />
+      )}
     </div>
   );
 }

@@ -57,3 +57,21 @@ body {
 .rs-picker-toggle.rs-btn {
   min-height: 34px;
 }
+
+/* rsuite ships its picker popups (SelectPicker/InputPicker/TagPicker) and
+   Dropdown menus at a very low default z-index (5-7, see rsuite's :root
+   --rs-zindex-picker-popup/--rs-zindex-dropdown vars) — fine in isolation,
+   but this app gives plain elements their own stacking contexts too: sticky
+   table headers (z-10) and the sidebar (z-40). Those sit above an open
+   picker popup by default, so a filter dropdown opened above a table (e.g.
+   the Question Bank list) renders partially behind the table's sticky
+   header instead of on top of it. Raise both above every in-page z-index
+   this app uses, while staying well under rsuite's own modal/drawer/
+   popover/tooltip layer (1050+) so overlays stacked inside those keep
+   working. (Popups opened inside our plain-Tailwind Drawer already escalate
+   further via rsuite's own `.rs-drawer-open .rs-picker-popup` rule — see
+   Drawer.tsx — so this only changes the default, non-drawer case.) */
+:root {
+  --rs-zindex-picker-popup: 60;
+  --rs-zindex-dropdown: 60;
+}

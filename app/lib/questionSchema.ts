@@ -2,6 +2,7 @@
 // No server-only imports here: this file is used from both the client editor
 // and the server action, so it must stay framework/runtime agnostic.
 
+import type { AttachedMedia } from "@/app/lib/media";
 import { valueByLabel, type ServiceOption } from "@/app/lib/serviceOptions";
 
 export type QuestionTypeCode = "mcq_single" | "msq" | "integer" | "owa";
@@ -9,6 +10,9 @@ export type QuestionTypeCode = "mcq_single" | "msq" | "integer" | "owa";
 export type OptionInput = {
   id: string;
   text: string;
+  // Optional image/audio/video attached via the option's media modal — see
+  // app/components/OptionMediaModal.tsx. Absent/null means no attachment.
+  media?: AttachedMedia | null;
 };
 
 // A dynamic tag: `key` is the tag dimension (e.g. "subject", "topic", or any
@@ -27,6 +31,10 @@ export type QuestionInput = {
   status: number;
   estSolveSec: number | null;
   stem: string;
+  // Optional image/audio/video attached to the question itself (as opposed
+  // to a specific option) — see the Media section in
+  // QuestionOptionalSettingsModal. Absent/null means no attachment.
+  media?: AttachedMedia | null;
   options: OptionInput[];
   correctOptionIds: string[];
   correctValue: string;
@@ -152,13 +160,18 @@ export type BuiltContent = {
 
 export function buildContent(q: QuestionInput): BuiltContent {
   const explanation = q.explanation.trim();
+  const questionMedia = q.media ? { media: q.media } : {};
 
   if (isOptionBasedType(q.typeCode)) {
     const options = q.options
       .filter((o) => o.text.trim())
-      .map((o) => ({ id: o.id, text: o.text.trim() }));
+      .map((o) => ({
+        id: o.id,
+        text: o.text.trim(),
+        ...(o.media ? { media: o.media } : {}),
+      }));
     return {
-      presentation: { stem: q.stem.trim(), options },
+      presentation: { stem: q.stem.trim(), ...questionMedia, options },
       answer: {
         correct: q.correctOptionIds,
         marks: q.marks,
@@ -170,7 +183,7 @@ export function buildContent(q: QuestionInput): BuiltContent {
 
   if (q.typeCode === "owa") {
     return {
-      presentation: { stem: q.stem.trim(), responseType: "text" },
+      presentation: { stem: q.stem.trim(), ...questionMedia, responseType: "text" },
       answer: {
         correct: q.correctValue.trim(),
         marks: q.marks,
@@ -182,7 +195,7 @@ export function buildContent(q: QuestionInput): BuiltContent {
 
   const n = Number(q.correctValue);
   return {
-    presentation: { stem: q.stem.trim(), responseType: "integer" },
+    presentation: { stem: q.stem.trim(), ...questionMedia, responseType: "integer" },
     answer: {
       correct: n,
       marks: q.marks,

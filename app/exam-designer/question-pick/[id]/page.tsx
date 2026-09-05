@@ -1,3 +1,4 @@
+import { BackLink } from "@/app/components/BackLink";
 import MockTestStatusBadge from "@/app/components/exams/MockTestStatusBadge";
 import QuestionPickWorkspace from "@/app/components/exams/QuestionPickWorkspace";
 import { iconTextButtonClass } from "@/app/components/ui";
@@ -25,9 +26,7 @@ export default async function QuestionPickPage({ params }: { params: Promise<{ i
 
   return (
     <div className="mx-auto w-full max-w-none px-6 py-8 xl:px-12">
-      <Link href="/exam-designer" className="text-sm text-zinc-500 hover:underline">
-        ← All exams
-      </Link>
+      <BackLink href="/exam-designer" label="All exams" />
 
       <div className="mt-3 flex items-center justify-between">
         <h1 className="text-lg font-semibold text-zinc-900">{mockTest.name}</h1>

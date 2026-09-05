@@ -1,7 +1,9 @@
 "use client";
 
 import { AppSelectPicker } from "@/app/components/AppSelectPicker";
+import { BackLink } from "@/app/components/BackLink";
 import Drawer from "@/app/components/Drawer";
+import OptionMediaModal from "@/app/components/OptionMediaModal";
 import QuestionOptionalSettingsModal from "@/app/components/QuestionOptionalSettingsModal";
 import { TagPairEditor } from "@/app/components/TagPairEditor";
 import {
@@ -32,6 +34,7 @@ import {
   nextClientId,
   parseImportJson,
   validateQuestion,
+  type OptionInput,
   type QuestionInput,
   type QuestionTypeCode,
   type ReferenceData,
@@ -42,7 +45,27 @@ import { notify } from "@/app/lib/toast";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useId, useMemo, useRef, useState, useTransition } from "react";
-import { FiCheck, FiCopy, FiEdit2, FiLoader, FiSave, FiSettings, FiTrash2 } from "react-icons/fi";
+import {
+  FiCheck,
+  FiCopy,
+  FiEdit2,
+  FiImage,
+  FiLoader,
+  FiMusic,
+  FiPaperclip,
+  FiSave,
+  FiSettings,
+  FiTrash2,
+  FiVideo,
+} from "react-icons/fi";
+
+const OPTION_MEDIA_ICON = {
+  image: FiImage,
+  audio: FiMusic,
+  video: FiVideo,
+  document: FiPaperclip,
+  attach: FiPaperclip,
+} as const;
 
 type Row = {
   clientId: string;
@@ -200,7 +223,7 @@ export default function QuestionBankEditor({
     );
   }
 
-  function updateOption(clientId: string, index: number, patch: Partial<{ id: string; text: string }>) {
+  function updateOption(clientId: string, index: number, patch: Partial<OptionInput>) {
     setRows((prev) =>
       prev.map((r) => {
         if (r.clientId !== clientId) return r;
@@ -516,9 +539,12 @@ export default function QuestionBankEditor({
       {/* Header + batch tools, one row */}
       <div className="shrink-0 border-b border-zinc-200 px-6 py-4">
         <div className="">
-          <h1 className="text-2xl font-semibold text-zinc-900 mb-2">Create Questions</h1>
+          <div className="flex items-center gap-3">
+            <BackLink href="/questions" label="Back" />
+            <h1 className="mt-2 text-2xl font-semibold text-zinc-900 mb-2">Create Questions</h1>
+          </div>
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-            <p className="max-w-96 text-sm text-zinc-500">
+            <p className="max-w-2xl text-sm text-zinc-500">
               Add several questions in one batch, or paste JSON to import many at once. Each question is
               saved with its first version, tags and search index in a single step.
             </p>
@@ -985,7 +1011,7 @@ function QuestionRowCard({
   isSaving: boolean;
   isFocused: boolean;
   onUpdate: (patch: Partial<QuestionInput>) => void;
-  onUpdateOption: (index: number, patch: Partial<{ id: string; text: string }>) => void;
+  onUpdateOption: (index: number, patch: Partial<OptionInput>) => void;
   onAddOption: () => void;
   onRemoveOption: (index: number) => void;
   onToggleCorrect: (optionId: string) => void;
@@ -998,6 +1024,8 @@ function QuestionRowCard({
   const { data } = row;
   const optionBased = isOptionBasedType(data.typeCode);
   const saveLabel = row.saved ? `Update question ${index + 1}` : `Save question ${index + 1}`;
+  const [mediaOptionIndex, setMediaOptionIndex] = useState<number | null>(null);
+  const mediaOption = mediaOptionIndex !== null ? data.options[mediaOptionIndex] : undefined;
 
   return (
     <section
@@ -1090,10 +1118,11 @@ function QuestionRowCard({
             <div className="flex flex-col gap-1.5">
               {data.options.map((opt, i) => {
                 const isCorrect = data.correctOptionIds.includes(opt.id);
+                const MediaIcon = OPTION_MEDIA_ICON[opt.media?.kind ?? "attach"];
                 return (
                   <div
                     key={i}
-                    className={`grid grid-cols-[auto_2.75rem_1fr_auto] items-center gap-2 rounded-md px-2 py-1 ${isCorrect ? "bg-emerald-50" : ""
+                    className={`grid grid-cols-[auto_2.75rem_1fr_auto_auto] items-center gap-2 rounded-md px-2 py-1 ${isCorrect ? "bg-emerald-50" : ""
                       }`}
                   >
                     <input
@@ -1118,6 +1147,15 @@ function QuestionRowCard({
                       placeholder="Option text"
                       autoComplete="off"
                     />
+                    <button
+                      type="button"
+                      className={opt.media ? savedIconTextButtonClass : buttonClass}
+                      onClick={() => setMediaOptionIndex(i)}
+                      aria-label={`Attach media to option ${opt.id}`}
+                      title={opt.media ? `${opt.media.kind} attached` : "Attach image, audio or video"}
+                    >
+                      <MediaIcon size={13} />
+                    </button>
                     <button
                       className={buttonClass}
                       onClick={() => onRemoveOption(i)}
@@ -1195,6 +1233,16 @@ function QuestionRowCard({
           </div>
         </div>
       </div>
+
+      {mediaOption && (
+        <OptionMediaModal
+          open={mediaOptionIndex !== null}
+          onClose={() => setMediaOptionIndex(null)}
+          optionLabel={`Option ${mediaOption.id}`}
+          media={mediaOption.media}
+          onChange={(media) => onUpdateOption(mediaOptionIndex!, { media })}
+        />
+      )}
     </section>
   );
 }
