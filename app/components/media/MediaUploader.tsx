@@ -6,16 +6,16 @@ import {
   dangerIconButtonClass,
   iconTextButtonClass,
   labelClass,
-} from "@/app/components/ui";
+} from "@/app/components/common/ui";
 import {
   MEDIA_ACCEPT,
   MEDIA_MAX_BYTES,
   formatBytes,
   type MediaKind,
   type MediaUploadResult,
-} from "@/app/lib/media";
-import { deleteMediaFile, uploadMediaFile } from "@/app/lib/mediaApi";
-import { notify } from "@/app/lib/toast";
+} from "@/app/lib/auth/media";
+import { deleteMediaFile, uploadMediaFile } from "@/app/lib/auth/mediaApi";
+import { notify } from "@/app/lib/shared/toast";
 
 // A file mid-upload, not yet part of the committed `value` the parent owns.
 // Committed (already-uploaded) files are rendered straight from `value` —
@@ -62,7 +62,7 @@ export function MediaUploader({
   accept?: string;
   className?: string;
   // Forwarded to the LMS as folderPath/DocumentTitle — see UploadOptions in
-  // app/lib/mediaApi.ts. Leave unset to fall back to MEDIA_FOLDER[kind] and
+  // app/lib/auth/mediaApi.ts. Leave unset to fall back to MEDIA_FOLDER[kind] and
   // the file's own name.
   folderPath?: string;
   title?: string;

@@ -1,5 +1,5 @@
-import { BackLink } from "@/app/components/BackLink";
-import { getQuestionForEdit, getReferenceData } from "@/app/lib/data";
+import { BackLink } from "@/app/components/common/BackLink";
+import { getQuestionForEdit, getReferenceData } from "@/app/lib/questions/data";
 import { notFound } from "next/navigation";
 import QuestionEditForm from "./QuestionEditForm";
 

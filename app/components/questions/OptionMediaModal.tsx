@@ -1,9 +1,9 @@
 "use client";
 
 import { Modal } from "rsuite";
-import { MediaAttachmentField } from "@/app/components/MediaAttachmentField";
-import { buttonClass } from "@/app/components/ui";
-import type { AttachedMedia } from "@/app/lib/media";
+import { MediaAttachmentField } from "@/app/components/media/MediaAttachmentField";
+import { buttonClass } from "@/app/components/common/ui";
+import type { AttachedMedia } from "@/app/lib/auth/media";
 
 export default function OptionMediaModal({
   open,

@@ -1,5 +1,5 @@
-import { listBlueprintTemplates, listTestKinds } from "@/app/lib/examData";
-import { getServiceOptions } from "@/app/lib/serviceConfig";
+import { listBlueprintTemplates, listTestKinds } from "@/app/lib/exams/data";
+import { getServiceOptions } from "@/app/lib/db/serviceConfig";
 import ExamDesigner from "./ExamDesigner";
 
 export const metadata = { title: "Create Exam · Question Bank" };

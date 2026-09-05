@@ -17,7 +17,7 @@ export type MediaUploadResult = {
 
 // A single {id, url} attachment plus which kind it was uploaded as — the
 // shape stored on a question or an option (see QuestionInput/OptionInput in
-// app/lib/questionSchema.ts), since an attachment isn't always an image.
+// app/lib/questions/schema.ts), since an attachment isn't always an image.
 export type AttachedMedia = MediaUploadResult & { kind: MediaKind };
 
 export const MEDIA_ACCEPT: Record<MediaKind, string> = {

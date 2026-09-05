@@ -1,11 +1,11 @@
 import DeleteMockTestButton from "@/app/components/exams/DeleteMockTestButton";
 import MockTestStatusBadge from "@/app/components/exams/MockTestStatusBadge";
 import { DataTable } from "@/app/components/table/DataTable";
-import { iconButtonClass, iconTextButtonClass, primaryButtonClass } from "@/app/components/ui";
-import { PAGE_SIZE_OPTIONS } from "@/app/lib/constants";
-import { listMockTests } from "@/app/lib/examData";
-import { getServiceOptions } from "@/app/lib/serviceConfig";
-import { valueByLabel } from "@/app/lib/serviceOptions";
+import { iconButtonClass, iconTextButtonClass, primaryButtonClass } from "@/app/components/common/ui";
+import { PAGE_SIZE_OPTIONS } from "@/app/lib/shared/constants";
+import { listMockTests } from "@/app/lib/exams/data";
+import { getServiceOptions } from "@/app/lib/db/serviceConfig";
+import { valueByLabel } from "@/app/lib/db/serviceOptions";
 import Link from "next/link";
 import { FiEdit2, FiPlusCircle } from "react-icons/fi";
 

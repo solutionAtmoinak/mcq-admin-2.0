@@ -1,4 +1,4 @@
-import AdminShell from "@/app/components/AdminShell";
+import AdminShell from "@/app/components/common/AdminShell";
 
 export default function ExamTemplatesLayout({
   children,

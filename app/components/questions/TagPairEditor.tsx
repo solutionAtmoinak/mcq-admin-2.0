@@ -2,8 +2,8 @@
 
 import { useMemo } from "react";
 import { InputPicker } from "rsuite";
-import type { ReferenceData, TagPair } from "@/app/lib/questionSchema";
-import { buttonClass } from "@/app/components/ui";
+import type { ReferenceData, TagPair } from "@/app/lib/questions/schema";
+import { buttonClass } from "@/app/components/common/ui";
 
 type Option = { label: string; value: string };
 

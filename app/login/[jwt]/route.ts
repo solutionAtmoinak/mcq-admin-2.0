@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { setAuthCookie, validateWithLms } from "@/app/lib/auth";
+import { setAuthCookie, validateWithLms } from "@/app/lib/auth/auth";
 
 export async function GET(
   request: Request,

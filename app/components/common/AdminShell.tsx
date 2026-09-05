@@ -1,4 +1,4 @@
-import NavBar from "@/app/components/NavBar";
+import NavBar from "@/app/components/common/NavBar";
 
 export default function AdminShell({
   children,

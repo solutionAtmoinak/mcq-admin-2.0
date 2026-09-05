@@ -3,9 +3,9 @@
 import { useMemo, useState } from "react";
 import { Modal } from "rsuite";
 import { FiCopy, FiX } from "react-icons/fi";
-import { buttonClass, iconTextButtonClass } from "@/app/components/ui";
-import { emptyTemplateDraft, filterJsonToTemplateDraft, type TemplateDraft } from "@/app/lib/examSchema";
-import type { BlueprintTemplateListItem } from "@/app/lib/examData";
+import { buttonClass, iconTextButtonClass } from "@/app/components/common/ui";
+import { emptyTemplateDraft, filterJsonToTemplateDraft, type TemplateDraft } from "@/app/lib/exams/schema";
+import type { BlueprintTemplateListItem } from "@/app/lib/exams/data";
 
 // "Use existing or create new" for shape: choosing a template here IS "use
 // existing" (it prefills every field below from that template's saved

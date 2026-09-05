@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { FiImage, FiMusic, FiPaperclip, FiVideo } from "react-icons/fi";
-import { updateQuestion } from "@/app/lib/actions";
+import { updateQuestion } from "@/app/lib/questions/actions";
 import {
   QUESTION_TYPE_LABELS,
   isOptionBasedType,
@@ -12,12 +12,12 @@ import {
   type QuestionInput,
   type ReferenceData,
   type TagPair,
-} from "@/app/lib/questionSchema";
-import { TagPairEditor } from "@/app/components/TagPairEditor";
-import StatusChanger from "@/app/components/StatusChanger";
-import { AppSelectPicker } from "@/app/components/AppSelectPicker";
-import { MediaAttachmentField } from "@/app/components/MediaAttachmentField";
-import OptionMediaModal from "@/app/components/OptionMediaModal";
+} from "@/app/lib/questions/schema";
+import { TagPairEditor } from "@/app/components/questions/TagPairEditor";
+import StatusChanger from "@/app/components/questions/StatusChanger";
+import { AppSelectPicker } from "@/app/components/common/AppSelectPicker";
+import { MediaAttachmentField } from "@/app/components/media/MediaAttachmentField";
+import OptionMediaModal from "@/app/components/questions/OptionMediaModal";
 import {
   inputClass,
   labelClass,
@@ -26,7 +26,7 @@ import {
   primaryButtonClass,
   savedIconTextButtonClass,
   sectionLabelClass,
-} from "@/app/components/ui";
+} from "@/app/components/common/ui";
 
 const OPTION_MEDIA_ICON = {
   image: FiImage,

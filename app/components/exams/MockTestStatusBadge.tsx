@@ -3,10 +3,10 @@
 import { useRouter } from "next/navigation";
 import { useMemo, useTransition } from "react";
 import Swal from "sweetalert2";
-import { changeMockTestStatus } from "@/app/lib/examActions";
-import { MOCK_TEST_STATUS_BADGE } from "@/app/lib/examConstants";
-import { toLabelRecord, type ServiceOption } from "@/app/lib/serviceOptions";
-import { notify } from "@/app/lib/toast";
+import { changeMockTestStatus } from "@/app/lib/exams/actions";
+import { MOCK_TEST_STATUS_BADGE } from "@/app/lib/exams/constants";
+import { toLabelRecord, type ServiceOption } from "@/app/lib/db/serviceOptions";
+import { notify } from "@/app/lib/shared/toast";
 
 // Same click-to-change pattern as QuestionStatusBadge, reused here for
 // MockTest — usable both inline in the exams list table and on an exam's

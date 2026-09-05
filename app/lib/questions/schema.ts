@@ -2,8 +2,8 @@
 // No server-only imports here: this file is used from both the client editor
 // and the server action, so it must stay framework/runtime agnostic.
 
-import type { AttachedMedia } from "@/app/lib/media";
-import { valueByLabel, type ServiceOption } from "@/app/lib/serviceOptions";
+import type { AttachedMedia } from "@/app/lib/auth/media";
+import { valueByLabel, type ServiceOption } from "@/app/lib/db/serviceOptions";
 
 export type QuestionTypeCode = "mcq_single" | "msq" | "integer" | "owa";
 
@@ -11,7 +11,7 @@ export type OptionInput = {
   id: string;
   text: string;
   // Optional image/audio/video attached via the option's media modal — see
-  // app/components/OptionMediaModal.tsx. Absent/null means no attachment.
+  // app/components/questions/OptionMediaModal.tsx. Absent/null means no attachment.
   media?: AttachedMedia | null;
 };
 
@@ -232,7 +232,7 @@ export type ReferenceData = {
   dimensions: ReferenceDimension[];
   tagsByDimensionId: Record<number, ReferenceTagOption[]>;
   // Status/difficulty dropdown options — sourced from the DB's
-  // _InternalService table (see app/lib/serviceConfig.ts) so an admin can
+  // _InternalService table (see app/lib/db/serviceConfig.ts) so an admin can
   // rename/reorder/deactivate them without a code change.
   questionStatusOptions: ServiceOption[];
   difficultyOptions: ServiceOption[];

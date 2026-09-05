@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
-import { getMockTestDraftForEdit, listBlueprintTemplates, listTestKinds } from "@/app/lib/examData";
-import { getServiceOptions } from "@/app/lib/serviceConfig";
+import { getMockTestDraftForEdit, listBlueprintTemplates, listTestKinds } from "@/app/lib/exams/data";
+import { getServiceOptions } from "@/app/lib/db/serviceConfig";
 import ExamDesigner from "@/app/exam-designer/new/ExamDesigner";
 
 export const metadata = { title: "Edit Exam · Question Bank" };

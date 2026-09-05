@@ -3,11 +3,11 @@
 import { useRouter } from "next/navigation";
 import { useMemo, useTransition } from "react";
 import Swal from "sweetalert2";
-import { changeQuestionStatus } from "@/app/lib/actions";
-import { QUESTION_STATUS_BADGE } from "@/app/lib/constants";
-import type { ServiceOption } from "@/app/lib/serviceOptions";
-import { toLabelRecord } from "@/app/lib/serviceOptions";
-import { notify } from "@/app/lib/toast";
+import { changeQuestionStatus } from "@/app/lib/questions/actions";
+import { QUESTION_STATUS_BADGE } from "@/app/lib/questions/constants";
+import type { ServiceOption } from "@/app/lib/db/serviceOptions";
+import { toLabelRecord } from "@/app/lib/db/serviceOptions";
+import { notify } from "@/app/lib/shared/toast";
 
 type StatusFormValues = { toStatus: number; comment: string };
 

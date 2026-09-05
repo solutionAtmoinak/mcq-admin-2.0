@@ -1,20 +1,20 @@
 "use server";
 
 import { Prisma } from "@/app/generated/prisma/client";
-import { requireUser, type CurrentUser } from "@/app/lib/auth";
-import { getQuestionForEdit } from "@/app/lib/data";
-import { prisma } from "@/app/lib/prisma";
+import { requireUser, type CurrentUser } from "@/app/lib/auth/auth";
+import { getQuestionForEdit } from "./data";
+import { prisma } from "@/app/lib/db/prisma";
 import {
   buildContent,
   buildSearchText,
   validateQuestion,
   type QuestionInput,
   type TagPair,
-} from "@/app/lib/questionSchema";
+} from "./schema";
 import { revalidatePath } from "next/cache";
 import crypto from "node:crypto";
-import { getServiceOptions } from "./serviceConfig";
-import { toValueRecord } from "./serviceOptions";
+import { getServiceOptions } from "@/app/lib/db/serviceConfig";
+import { toValueRecord } from "@/app/lib/db/serviceOptions";
 
 // The tx param inside prisma.$transaction(async (tx) => ...) — extracted so
 // the tag-resolution helper below can be shared by create and update.

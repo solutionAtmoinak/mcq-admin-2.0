@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Modal } from "rsuite";
-import { buttonClass, inputClass, labelClass, primaryButtonClass } from "@/app/components/ui";
+import { buttonClass, inputClass, labelClass, primaryButtonClass } from "@/app/components/common/ui";
 
 // "Create new" half of the test-kind picker's "use existing or create new"
 // pattern — the code is auto-slugged from the name so the admin only ever

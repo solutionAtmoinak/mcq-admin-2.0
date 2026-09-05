@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireAuth } from "@/app/lib/auth";
+import { requireAuth } from "@/app/lib/auth/auth";
 
 const UPLOAD_URL = `${process.env.API_ENDPOINT_URL}/uploads`;
 

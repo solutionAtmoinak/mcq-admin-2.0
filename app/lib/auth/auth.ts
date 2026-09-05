@@ -3,7 +3,7 @@
 import { jwtDecode } from "jwt-decode";
 import { cookies } from "next/headers";
 import { redirect, RedirectType } from "next/navigation";
-import { UserModel } from "../interface/UserModel";
+import { UserModel } from "../../interface/UserModel";
 
 const AUTH_COOKIE = "dth_token";
 

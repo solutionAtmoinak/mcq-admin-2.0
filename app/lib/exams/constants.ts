@@ -1,8 +1,8 @@
 // Status values (both the set of valid ones and what counts as "draft",
 // "published", etc.) come from the DB (_InternalService, Category
-// "EXAM_STATUS") at runtime — see app/lib/serviceConfig.ts's
-// getServiceOptions/getServiceValue and examActions.ts's getExamStatus().
-// Nothing here hardcodes which number means what.
+// "EXAM_STATUS") at runtime — see app/lib/db/serviceConfig.ts's
+// getServiceOptions/getServiceValue and app/lib/exams/actions.ts's
+// getExamStatus(). Nothing here hardcodes which number means what.
 //
 // Badge colors have no DB column to come from, so this one lookup stays a
 // fixed presentation-only palette, keyed by whatever numeric value the DB

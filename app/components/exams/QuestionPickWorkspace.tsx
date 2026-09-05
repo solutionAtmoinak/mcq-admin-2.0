@@ -2,11 +2,11 @@
 
 import QuestionPickerDrawer from "@/app/components/exams/QuestionPickerDrawer";
 import SectionQuestionList from "@/app/components/exams/SectionQuestionList";
-import { cardClass, iconTextButtonClass, sectionLabelClass, subCardClass } from "@/app/components/ui";
-import type { QuestionLotOption } from "@/app/lib/data";
-import type { MockTestDetail } from "@/app/lib/examData";
-import type { ReferenceData } from "@/app/lib/questionSchema";
-import { toValueRecord, type ServiceOption } from "@/app/lib/serviceOptions";
+import { cardClass, iconTextButtonClass, sectionLabelClass, subCardClass } from "@/app/components/common/ui";
+import type { QuestionLotOption } from "@/app/lib/questions/data";
+import type { MockTestDetail } from "@/app/lib/exams/data";
+import type { ReferenceData } from "@/app/lib/questions/schema";
+import { toValueRecord, type ServiceOption } from "@/app/lib/db/serviceOptions";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { FiPlusCircle } from "react-icons/fi";

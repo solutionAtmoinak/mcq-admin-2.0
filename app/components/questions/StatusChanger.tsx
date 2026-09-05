@@ -2,12 +2,12 @@
 
 import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
-import { changeQuestionStatus } from "@/app/lib/actions";
-import { QUESTION_STATUS_BADGE } from "@/app/lib/constants";
-import type { ServiceOption } from "@/app/lib/serviceOptions";
-import { toLabelRecord } from "@/app/lib/serviceOptions";
-import { inputClass, labelClass, primaryButtonClass, cardClass, sectionLabelClass } from "@/app/components/ui";
-import { AppSelectPicker } from "@/app/components/AppSelectPicker";
+import { changeQuestionStatus } from "@/app/lib/questions/actions";
+import { QUESTION_STATUS_BADGE } from "@/app/lib/questions/constants";
+import type { ServiceOption } from "@/app/lib/db/serviceOptions";
+import { toLabelRecord } from "@/app/lib/db/serviceOptions";
+import { inputClass, labelClass, primaryButtonClass, cardClass, sectionLabelClass } from "@/app/components/common/ui";
+import { AppSelectPicker } from "@/app/components/common/AppSelectPicker";
 
 export default function StatusChanger({
   questionId,

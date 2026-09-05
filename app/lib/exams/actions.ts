@@ -3,15 +3,15 @@
 import crypto from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { Prisma } from "@/app/generated/prisma/client";
-import { prisma } from "@/app/lib/prisma";
-import { requireUser, type CurrentUser } from "@/app/lib/auth";
+import { prisma } from "@/app/lib/db/prisma";
+import { requireUser, type CurrentUser } from "@/app/lib/auth/auth";
 import {
   listQuestionIdsForFilter,
   listQuestions,
   type QuestionListFilters,
   type QuestionListItem,
-} from "@/app/lib/data";
-import { FALLBACK_CATALOG } from "@/app/lib/examConstants";
+} from "@/app/lib/questions/data";
+import { FALLBACK_CATALOG } from "./constants";
 import {
   buildFilterJsonFromDraft,
   codeSlug,
@@ -20,9 +20,9 @@ import {
   type BlueprintFilterJson,
   type MockTestRecipe,
   type TemplateDraft,
-} from "@/app/lib/examSchema";
-import { getServiceOptions } from "./serviceConfig";
-import { toValueRecord } from "./serviceOptions";
+} from "./schema";
+import { getServiceOptions } from "@/app/lib/db/serviceConfig";
+import { toValueRecord } from "@/app/lib/db/serviceOptions";
 
 type Tx = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
 
@@ -158,7 +158,7 @@ async function materializeMockTest(
 
   // MarkingScheme, ExamPaper, PaperSection all have a RowVer column — raw
   // SQL with OUTPUT INSERTED.<Id>, same workaround used throughout
-  // app/lib/actions.ts for Question/QuestionVersion.
+  // app/lib/questions/actions.ts for Question/QuestionVersion.
   const [scheme] = await tx.$queryRaw<{ SchemeId: bigint }[]>(
     Prisma.sql`INSERT INTO dbo.MarkingScheme (Name, RulesJson, CreatedBy, FranchiseId)
       OUTPUT INSERTED.SchemeId

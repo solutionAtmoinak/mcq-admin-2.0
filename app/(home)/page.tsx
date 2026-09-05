@@ -1,6 +1,6 @@
-import { getBankSummary } from "@/app/lib/data";
-import { getServiceOptions } from "@/app/lib/serviceConfig";
-import { toLabelRecord } from "@/app/lib/serviceOptions";
+import { getBankSummary } from "@/app/lib/questions/data";
+import { getServiceOptions } from "@/app/lib/db/serviceConfig";
+import { toLabelRecord } from "@/app/lib/db/serviceOptions";
 import Link from "next/link";
 
 export const dynamic = "force-dynamic";

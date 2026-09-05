@@ -2,9 +2,9 @@
 
 import { useState } from "react";
 import { FiImage, FiMusic, FiVideo } from "react-icons/fi";
-import { MediaUploader } from "@/app/components/MediaUploader";
-import { buttonClass, primaryButtonClass } from "@/app/components/ui";
-import type { AttachedMedia, MediaKind, MediaUploadResult } from "@/app/lib/media";
+import { MediaUploader } from "@/app/components/media/MediaUploader";
+import { buttonClass, primaryButtonClass } from "@/app/components/common/ui";
+import type { AttachedMedia, MediaKind, MediaUploadResult } from "@/app/lib/auth/media";
 
 const KIND_TABS: { value: MediaKind; label: string; icon: typeof FiImage }[] = [
   { value: "image", label: "Image", icon: FiImage },

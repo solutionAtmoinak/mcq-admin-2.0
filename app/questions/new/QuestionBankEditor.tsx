@@ -1,11 +1,11 @@
 "use client";
 
-import { AppSelectPicker } from "@/app/components/AppSelectPicker";
-import { BackLink } from "@/app/components/BackLink";
-import Drawer from "@/app/components/Drawer";
-import OptionMediaModal from "@/app/components/OptionMediaModal";
-import QuestionOptionalSettingsModal from "@/app/components/QuestionOptionalSettingsModal";
-import { TagPairEditor } from "@/app/components/TagPairEditor";
+import { AppSelectPicker } from "@/app/components/common/AppSelectPicker";
+import { BackLink } from "@/app/components/common/BackLink";
+import Drawer from "@/app/components/common/Drawer";
+import OptionMediaModal from "@/app/components/questions/OptionMediaModal";
+import QuestionOptionalSettingsModal from "@/app/components/questions/QuestionOptionalSettingsModal";
+import { TagPairEditor } from "@/app/components/questions/TagPairEditor";
 import {
   buttonClass,
   cardClass,
@@ -17,15 +17,15 @@ import {
   primaryButtonClass,
   savedIconTextButtonClass,
   subSectionLabelClass,
-} from "@/app/components/ui";
+} from "@/app/components/common/ui";
 import {
   createQuestionLot,
   createQuestions,
   getQuestionInputForDuplicate,
   updateQuestion,
-} from "@/app/lib/actions";
-import { QUESTION_STATUS_BADGE } from "@/app/lib/constants";
-import type { TodayQuestionItem } from "@/app/lib/data";
+} from "@/app/lib/questions/actions";
+import { QUESTION_STATUS_BADGE } from "@/app/lib/questions/constants";
+import type { TodayQuestionItem } from "@/app/lib/questions/data";
 import {
   IMPORT_JSON_EXAMPLE,
   QUESTION_TYPE_LABELS,
@@ -39,9 +39,9 @@ import {
   type QuestionTypeCode,
   type ReferenceData,
   type TagPair,
-} from "@/app/lib/questionSchema";
-import { toLabelRecord, valueByLabel, type ServiceOption } from "@/app/lib/serviceOptions";
-import { notify } from "@/app/lib/toast";
+} from "@/app/lib/questions/schema";
+import { toLabelRecord, valueByLabel, type ServiceOption } from "@/app/lib/db/serviceOptions";
+import { notify } from "@/app/lib/shared/toast";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useId, useMemo, useRef, useState, useTransition } from "react";

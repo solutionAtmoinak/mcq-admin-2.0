@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { getBlueprintTemplateForEdit, listTestKinds } from "@/app/lib/examData";
+import { getBlueprintTemplateForEdit, listTestKinds } from "@/app/lib/exams/data";
 import TemplateDesigner from "@/app/exam-templates/new/TemplateDesigner";
 
 export const metadata = { title: "Edit Template · Question Bank" };

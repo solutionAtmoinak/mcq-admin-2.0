@@ -1,14 +1,14 @@
-import { prisma } from "@/app/lib/prisma";
-import { requireAuth, requireUser } from "@/app/lib/auth";
-import { getServiceOptions } from "@/app/lib/serviceConfig";
-import type { AttachedMedia } from "@/app/lib/media";
+import { prisma } from "@/app/lib/db/prisma";
+import { requireAuth, requireUser } from "@/app/lib/auth/auth";
+import { getServiceOptions } from "@/app/lib/db/serviceConfig";
+import type { AttachedMedia } from "@/app/lib/auth/media";
 import type {
   ReferenceData,
   ReferenceTagOption,
   QuestionTypeCode,
   QuestionInput,
-} from "@/app/lib/questionSchema";
-import { emptyQuestion } from "@/app/lib/questionSchema";
+} from "./schema";
+import { emptyQuestion } from "./schema";
 
 export async function getReferenceData(): Promise<ReferenceData> {
   await requireAuth();

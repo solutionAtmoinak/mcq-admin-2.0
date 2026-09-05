@@ -6,14 +6,14 @@ import Swal from "sweetalert2";
 import ShapeDesignerFields from "@/app/components/exams/ShapeDesignerFields";
 import StartFromTemplateField from "@/app/components/exams/StartFromTemplateField";
 import MockTestStatusSelect from "@/app/components/exams/MockTestStatusSelect";
-import { AppSelectPicker } from "@/app/components/AppSelectPicker";
-import { buttonClass, primaryButtonClass } from "@/app/components/ui";
-import { createMockTestFromDraft, updateMockTestFromDraft } from "@/app/lib/examActions";
-import { notify } from "@/app/lib/toast";
-import { emptyTemplateDraft, filterJsonToTemplateDraft, validateShapeDraft, type TemplateDraft } from "@/app/lib/examSchema";
-import type { BlueprintTemplateListItem } from "@/app/lib/examData";
+import { AppSelectPicker } from "@/app/components/common/AppSelectPicker";
+import { buttonClass, primaryButtonClass } from "@/app/components/common/ui";
+import { createMockTestFromDraft, updateMockTestFromDraft } from "@/app/lib/exams/actions";
+import { notify } from "@/app/lib/shared/toast";
+import { emptyTemplateDraft, filterJsonToTemplateDraft, validateShapeDraft, type TemplateDraft } from "@/app/lib/exams/schema";
+import type { BlueprintTemplateListItem } from "@/app/lib/exams/data";
 
-import { toValueRecord, type ServiceOption } from "@/app/lib/serviceOptions";
+import { toValueRecord, type ServiceOption } from "@/app/lib/db/serviceOptions";
 
 // The flexible exam page: design from scratch or copy an existing template
 // (StartFromTemplateField handles that), decide the test kind (mock or

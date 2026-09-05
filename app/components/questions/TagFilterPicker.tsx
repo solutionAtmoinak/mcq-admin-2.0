@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { TagPicker } from "rsuite";
-import type { ReferenceData } from "@/app/lib/questionSchema";
+import type { ReferenceData } from "@/app/lib/questions/schema";
 
 type Option = { label: string; value: string };
 

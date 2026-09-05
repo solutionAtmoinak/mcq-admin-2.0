@@ -1,5 +1,5 @@
-import { prisma } from "@/app/lib/prisma";
-import { valueByLabel, type ServiceOption } from "@/app/lib/serviceOptions";
+import { prisma } from "./prisma";
+import { valueByLabel, type ServiceOption } from "./serviceOptions";
 
 export type ServiceCategory =
   | "QUESTION_STATUS"

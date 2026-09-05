@@ -4,9 +4,9 @@ import { useRouter } from "next/navigation";
 import { useTransition } from "react";
 import { FiLoader, FiTrash2 } from "react-icons/fi";
 import Swal from "sweetalert2";
-import { deleteMockTest } from "@/app/lib/examActions";
-import { notify } from "@/app/lib/toast";
-import { dangerIconButtonClass } from "@/app/components/ui";
+import { deleteMockTest } from "@/app/lib/exams/actions";
+import { notify } from "@/app/lib/shared/toast";
+import { dangerIconButtonClass } from "@/app/components/common/ui";
 
 export default function DeleteMockTestButton({ mockTestId, examName }: { mockTestId: string; examName: string }) {
   const router = useRouter();

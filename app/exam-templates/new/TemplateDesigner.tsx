@@ -3,10 +3,10 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import ShapeDesignerFields from "@/app/components/exams/ShapeDesignerFields";
-import { buttonClass, primaryButtonClass } from "@/app/components/ui";
-import { createBlueprintTemplate, updateBlueprintTemplate } from "@/app/lib/examActions";
-import { notify } from "@/app/lib/toast";
-import { emptyTemplateDraft, validateTemplateDraft, type TemplateDraft } from "@/app/lib/examSchema";
+import { buttonClass, primaryButtonClass } from "@/app/components/common/ui";
+import { createBlueprintTemplate, updateBlueprintTemplate } from "@/app/lib/exams/actions";
+import { notify } from "@/app/lib/shared/toast";
+import { emptyTemplateDraft, validateTemplateDraft, type TemplateDraft } from "@/app/lib/exams/schema";
 
 // Templates are always designed from scratch — no "copy an existing
 // template" here (that flexibility lives on the exam-creation page instead,

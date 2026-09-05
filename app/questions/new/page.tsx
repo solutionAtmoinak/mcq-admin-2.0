@@ -1,4 +1,4 @@
-import { getReferenceData, getTodayQuestions } from "@/app/lib/data";
+import { getReferenceData, getTodayQuestions } from "@/app/lib/questions/data";
 import QuestionBankEditor from "./QuestionBankEditor";
 
 export const metadata = { title: "Create Questions · Question Bank" };

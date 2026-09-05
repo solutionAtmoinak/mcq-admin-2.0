@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useRef, useState, type ReactNode } from "react";
-import { AppSelectPicker } from "@/app/components/AppSelectPicker";
+import { AppSelectPicker } from "@/app/components/common/AppSelectPicker";
 import CreateTestKindModal from "@/app/components/exams/CreateTestKindModal";
 import {
   cardClass,
@@ -11,8 +11,8 @@ import {
   labelClass,
   sectionLabelClass,
   subCardClass,
-} from "@/app/components/ui";
-import { emptyTemplateSection, type TemplateDraft } from "@/app/lib/examSchema";
+} from "@/app/components/common/ui";
+import { emptyTemplateSection, type TemplateDraft } from "@/app/lib/exams/schema";
 import { FiPlus, FiTrash2 } from "react-icons/fi";
 
 // A small on/off pill — negative marking is optional per section, off by

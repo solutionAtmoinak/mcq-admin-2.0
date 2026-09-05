@@ -2,10 +2,10 @@
 
 import { useRouter } from "next/navigation";
 import { useTransition } from "react";
-import { AppSelectPicker } from "@/app/components/AppSelectPicker";
-import { changeMockTestStatus } from "@/app/lib/examActions";
-import type { ServiceOption } from "@/app/lib/serviceOptions";
-import { notify } from "@/app/lib/toast";
+import { AppSelectPicker } from "@/app/components/common/AppSelectPicker";
+import { changeMockTestStatus } from "@/app/lib/exams/actions";
+import type { ServiceOption } from "@/app/lib/db/serviceOptions";
+import { notify } from "@/app/lib/shared/toast";
 
 // Inline "Status" dropdown for the exam designer — same field/placement
 // pattern as the question form's Status picker, unlike MockTestStatusBadge

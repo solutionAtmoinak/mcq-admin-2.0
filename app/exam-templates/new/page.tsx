@@ -1,4 +1,4 @@
-import { listTestKinds } from "@/app/lib/examData";
+import { listTestKinds } from "@/app/lib/exams/data";
 import TemplateDesigner from "./TemplateDesigner";
 
 export const metadata = { title: "Design Template · Question Bank" };

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { AppSelectPicker, type SelectOption } from "@/app/components/AppSelectPicker";
+import { AppSelectPicker, type SelectOption } from "@/app/components/common/AppSelectPicker";
 
 // Wraps AppSelectPicker with local state mirrored into a hidden input, so a
 // plain <form method="GET"> filter bar can use it without a submit handler.

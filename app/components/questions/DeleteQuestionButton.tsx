@@ -4,9 +4,9 @@ import { useRouter } from "next/navigation";
 import { useTransition } from "react";
 import { FiLoader, FiTrash2 } from "react-icons/fi";
 import Swal from "sweetalert2";
-import { deleteQuestion } from "@/app/lib/actions";
-import { notify } from "@/app/lib/toast";
-import { dangerIconButtonClass } from "@/app/components/ui";
+import { deleteQuestion } from "@/app/lib/questions/actions";
+import { notify } from "@/app/lib/shared/toast";
+import { dangerIconButtonClass } from "@/app/components/common/ui";
 
 export default function DeleteQuestionButton({
   questionId,

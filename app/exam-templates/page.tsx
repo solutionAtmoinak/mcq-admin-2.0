@@ -1,6 +1,6 @@
 import Link from "next/link";
-import { listBlueprintTemplates } from "@/app/lib/examData";
-import { primaryButtonClass, buttonClass } from "@/app/components/ui";
+import { listBlueprintTemplates } from "@/app/lib/exams/data";
+import { primaryButtonClass, buttonClass } from "@/app/components/common/ui";
 
 export const metadata = { title: "Exam Templates · Question Bank" };
 export const dynamic = "force-dynamic";

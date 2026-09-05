@@ -3,7 +3,7 @@
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { FaHome } from "react-icons/fa";
-import { clearAuthCookie, getAuthCookie, validateWithLms } from "../lib/auth";
+import { clearAuthCookie, getAuthCookie, validateWithLms } from "../lib/auth/auth";
 
 
 const LoginPage = () => {

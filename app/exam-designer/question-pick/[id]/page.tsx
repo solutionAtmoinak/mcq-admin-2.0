@@ -1,11 +1,11 @@
-import { BackLink } from "@/app/components/BackLink";
+import { BackLink } from "@/app/components/common/BackLink";
 import MockTestStatusBadge from "@/app/components/exams/MockTestStatusBadge";
 import QuestionPickWorkspace from "@/app/components/exams/QuestionPickWorkspace";
-import { iconTextButtonClass } from "@/app/components/ui";
-import { getReferenceData, listQuestionLots } from "@/app/lib/data";
-import { getMockTestForEdit } from "@/app/lib/examData";
-import { getServiceOptions } from "@/app/lib/serviceConfig";
-import { valueByLabel } from "@/app/lib/serviceOptions";
+import { iconTextButtonClass } from "@/app/components/common/ui";
+import { getReferenceData, listQuestionLots } from "@/app/lib/questions/data";
+import { getMockTestForEdit } from "@/app/lib/exams/data";
+import { getServiceOptions } from "@/app/lib/db/serviceConfig";
+import { valueByLabel } from "@/app/lib/db/serviceOptions";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { FiEdit2 } from "react-icons/fi";

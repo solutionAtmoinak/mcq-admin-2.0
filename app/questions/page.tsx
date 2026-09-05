@@ -1,12 +1,12 @@
-import DeleteQuestionButton from "@/app/components/DeleteQuestionButton";
-import { FilterSelectPicker } from "@/app/components/FilterSelectPicker";
-import QuestionStatusBadge from "@/app/components/QuestionStatusBadge";
+import DeleteQuestionButton from "@/app/components/questions/DeleteQuestionButton";
+import { FilterSelectPicker } from "@/app/components/common/FilterSelectPicker";
+import QuestionStatusBadge from "@/app/components/questions/QuestionStatusBadge";
 import { DataTable } from "@/app/components/table/DataTable";
-import { TagFilterPicker } from "@/app/components/TagFilterPicker";
-import { PAGE_SIZE_OPTIONS } from "@/app/lib/constants";
-import { getReferenceData, listQuestions } from "@/app/lib/data";
-import { QUESTION_TYPE_LABELS, type QuestionTypeCode } from "@/app/lib/questionSchema";
-import { toLabelRecord } from "@/app/lib/serviceOptions";
+import { TagFilterPicker } from "@/app/components/questions/TagFilterPicker";
+import { PAGE_SIZE_OPTIONS } from "@/app/lib/shared/constants";
+import { getReferenceData, listQuestions } from "@/app/lib/questions/data";
+import { QUESTION_TYPE_LABELS, type QuestionTypeCode } from "@/app/lib/questions/schema";
+import { toLabelRecord } from "@/app/lib/db/serviceOptions";
 import Link from "next/link";
 import { FiSearch } from "react-icons/fi";
 

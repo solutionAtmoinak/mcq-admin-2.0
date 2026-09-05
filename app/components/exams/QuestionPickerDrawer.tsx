@@ -1,15 +1,16 @@
 "use client";
 
-import { AppSelectPicker } from "@/app/components/AppSelectPicker";
-import Drawer from "@/app/components/Drawer";
-import { TagFilterPicker } from "@/app/components/TagFilterPicker";
-import { buttonClass, inputClass, primaryButtonClass } from "@/app/components/ui";
-import { PAGE_SIZE_OPTIONS, QUESTION_STATUS_BADGE } from "@/app/lib/constants";
-import type { QuestionListItem, QuestionLotOption } from "@/app/lib/data";
-import { addQuestionsToSection, searchPickerQuestions, selectAllPickerQuestionIds } from "@/app/lib/examActions";
-import { QUESTION_TYPE_LABELS, type QuestionTypeCode, type ReferenceData } from "@/app/lib/questionSchema";
-import { toLabelRecord } from "@/app/lib/serviceOptions";
-import { notify } from "@/app/lib/toast";
+import { AppSelectPicker } from "@/app/components/common/AppSelectPicker";
+import Drawer from "@/app/components/common/Drawer";
+import { TagFilterPicker } from "@/app/components/questions/TagFilterPicker";
+import { buttonClass, inputClass, primaryButtonClass } from "@/app/components/common/ui";
+import { PAGE_SIZE_OPTIONS } from "@/app/lib/shared/constants";
+import { QUESTION_STATUS_BADGE } from "@/app/lib/questions/constants";
+import type { QuestionListItem, QuestionLotOption } from "@/app/lib/questions/data";
+import { addQuestionsToSection, searchPickerQuestions, selectAllPickerQuestionIds } from "@/app/lib/exams/actions";
+import { QUESTION_TYPE_LABELS, type QuestionTypeCode, type ReferenceData } from "@/app/lib/questions/schema";
+import { toLabelRecord } from "@/app/lib/db/serviceOptions";
+import { notify } from "@/app/lib/shared/toast";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { FiChevronLeft, FiChevronRight, FiLoader, FiSearch } from "react-icons/fi";
 

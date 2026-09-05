@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { requireAuth } from "@/app/lib/auth";
-import { MEDIA_ACCEPT, MEDIA_FOLDER, MEDIA_MAX_BYTES, type MediaKind } from "@/app/lib/media";
+import { requireAuth } from "@/app/lib/auth/auth";
+import { MEDIA_ACCEPT, MEDIA_FOLDER, MEDIA_MAX_BYTES, type MediaKind } from "@/app/lib/auth/media";
 
 // Same upload endpoint the legacy React admin's uploadApi.ts posts to
 // (`${REACT_APP_APIBaseUrl}/uploads`) — this route exists only to attach the

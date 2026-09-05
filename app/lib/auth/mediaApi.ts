@@ -1,4 +1,4 @@
-import type { MediaKind, MediaUploadResult } from "@/app/lib/media";
+import type { MediaKind, MediaUploadResult } from "./media";
 
 export type UploadProgressHandler = (percent: number) => void;
 

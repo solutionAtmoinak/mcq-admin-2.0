@@ -1,6 +1,6 @@
-import { prisma } from "@/app/lib/prisma";
-import { requireUser } from "@/app/lib/auth";
-import { MASTER_FRANCHISE_ID } from "@/app/lib/constants";
+import { prisma } from "@/app/lib/db/prisma";
+import { requireUser } from "@/app/lib/auth/auth";
+import { MASTER_FRANCHISE_ID } from "@/app/lib/shared/constants";
 import {
   buildTemplateDraftFromExam,
   filterJsonToTemplateDraft,
@@ -8,9 +8,9 @@ import {
   type BlueprintFilterJson,
   type MockTestRecipe,
   type TemplateDraft,
-} from "@/app/lib/examSchema";
-import { getServiceOptions } from "@/app/lib/serviceConfig";
-import { toLabelRecord } from "@/app/lib/serviceOptions";
+} from "./schema";
+import { getServiceOptions } from "@/app/lib/db/serviceConfig";
+import { toLabelRecord } from "@/app/lib/db/serviceOptions";
 
 export type BlueprintTemplateListItem = {
   templateId: string;

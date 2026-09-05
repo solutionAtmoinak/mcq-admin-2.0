@@ -1,10 +1,10 @@
 "use client";
 
 import { Modal } from "rsuite";
-import { MediaAttachmentField } from "@/app/components/MediaAttachmentField";
-import { TagPairEditor } from "@/app/components/TagPairEditor";
-import { inputClass, labelClass, subCardClassLight, subSectionLabelClass } from "@/app/components/ui";
-import type { QuestionInput, ReferenceData, TagPair } from "@/app/lib/questionSchema";
+import { MediaAttachmentField } from "@/app/components/media/MediaAttachmentField";
+import { TagPairEditor } from "@/app/components/questions/TagPairEditor";
+import { inputClass, labelClass, subCardClassLight, subSectionLabelClass } from "@/app/components/common/ui";
+import type { QuestionInput, ReferenceData, TagPair } from "@/app/lib/questions/schema";
 
 // Reusable rsuite modal for the fields that aren't required to save a
 // question: scoring/timing, tags and code. Keeping these out of the main row

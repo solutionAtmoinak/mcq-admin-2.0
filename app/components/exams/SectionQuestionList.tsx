@@ -5,11 +5,11 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import Swal from "sweetalert2";
 import { FiArrowDown, FiArrowUp, FiX } from "react-icons/fi";
-import { removeQuestionsFromSection, reorderSectionQuestions } from "@/app/lib/examActions";
-import { notify } from "@/app/lib/toast";
-import { dangerIconButtonClass, iconButtonClass } from "@/app/components/ui";
-import { toLabelRecord, type ServiceOption } from "@/app/lib/serviceOptions";
-import type { PickedQuestionView } from "@/app/lib/examData";
+import { removeQuestionsFromSection, reorderSectionQuestions } from "@/app/lib/exams/actions";
+import { notify } from "@/app/lib/shared/toast";
+import { dangerIconButtonClass, iconButtonClass } from "@/app/components/common/ui";
+import { toLabelRecord, type ServiceOption } from "@/app/lib/db/serviceOptions";
+import type { PickedQuestionView } from "@/app/lib/exams/data";
 
 // A section's current picks, in exam order — the "re-arrange any time
 // before publish" half of the picker: up/down to reorder (persisted
