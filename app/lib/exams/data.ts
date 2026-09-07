@@ -102,6 +102,7 @@ export type MockTestListItem = {
   status: number;
   statusLabel: string;
   paperName: string;
+  testKindName: string;
   totalMarks: string;
   durationMin: number;
   createdOn: Date;
@@ -115,7 +116,10 @@ export async function listMockTests(opts: { page: number; pageSize: number }): P
     prisma.mockTest.findMany({
       where,
       orderBy: { CreatedOn: "desc" },
-      include: { ExamPaper: { select: { Name: true, TotalMarks: true, DurationMin: true } } },
+      include: {
+        ExamPaper: { select: { Name: true, TotalMarks: true, DurationMin: true } },
+        TestKind: { select: { Name: true } },
+      },
       skip: (opts.page - 1) * opts.pageSize,
       take: opts.pageSize,
     }),
@@ -131,6 +135,7 @@ export async function listMockTests(opts: { page: number; pageSize: number }): P
       status: r.Status,
       statusLabel: statusLabels[r.Status] ?? "Unknown",
       paperName: r.ExamPaper.Name,
+      testKindName: r.TestKind.Name,
       totalMarks: r.ExamPaper.TotalMarks.toString(),
       durationMin: r.ExamPaper.DurationMin,
       createdOn: r.CreatedOn,

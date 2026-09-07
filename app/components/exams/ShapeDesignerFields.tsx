@@ -1,8 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState, type ReactNode } from "react";
 import { AppSelectPicker } from "@/app/components/common/AppSelectPicker";
-import CreateTestKindModal from "@/app/components/exams/CreateTestKindModal";
 import {
   cardClass,
   dangerIconButtonClass,
@@ -12,7 +10,9 @@ import {
   sectionLabelClass,
   subCardClass,
 } from "@/app/components/common/ui";
+import CreateTestKindModal from "@/app/components/exams/CreateTestKindModal";
 import { emptyTemplateSection, type TemplateDraft } from "@/app/lib/exams/schema";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 import { FiPlus, FiTrash2 } from "react-icons/fi";
 
 // A small on/off pill — negative marking is optional per section, off by
@@ -24,14 +24,12 @@ function NegativeMarkingToggle({ checked, onChange }: { checked: boolean; onChan
       role="switch"
       aria-checked={checked}
       onClick={() => onChange(!checked)}
-      className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${
-        checked ? "bg-zinc-900" : "bg-zinc-200"
-      }`}
+      className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${checked ? "bg-zinc-900" : "bg-zinc-200"
+        }`}
     >
       <span
-        className={`absolute left-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${
-          checked ? "translate-x-4" : "translate-x-0"
-        }`}
+        className={`absolute left-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${checked ? "translate-x-4" : "translate-x-0"
+          }`}
       />
     </button>
   );
@@ -241,7 +239,7 @@ export default function ShapeDesignerFields({
                     />
                   </div>
                   <div className="flex flex-1 flex-wrap items-end gap-3">
-                    <div className="w-20">
+                    <div className="w-24">
                       <label className={labelClass}>Type</label>
                       <input
                         className={inputClass}
@@ -250,19 +248,22 @@ export default function ShapeDesignerFields({
                         placeholder="mcq"
                       />
                     </div>
-                    <div className="w-24">
-                      <label className={labelClass}>Questions</label>
+                    <div className={picked > 0 ? "w-36" : "w-24"}>
+                      <label className={labelClass}>
+                        Questions
+                        {picked > 0 && (
+                          <span className={`ml-2 mt-1 whitespace-nowrap text-[11px] ${overCapacity ? "font-medium text-red-600" : "text-zinc-400"}`}>
+                            {picked} picked{overCapacity ? ` (${picked - s.questions} over)` : ""}
+                          </span>
+                        )}
+                      </label>
                       <input
                         type="number"
                         className={`${inputClass} ${overCapacity ? "border-red-300 focus:border-red-500" : ""}`}
                         value={s.questions}
                         onChange={(e) => updateSection(s.clientId, { questions: Number(e.target.value) })}
                       />
-                      {picked > 0 && (
-                        <p className={`mt-1 whitespace-nowrap text-[11px] ${overCapacity ? "font-medium text-red-600" : "text-zinc-400"}`}>
-                          {picked} picked{overCapacity ? ` (${picked - s.questions} over)` : ""}
-                        </p>
-                      )}
+
                     </div>
                     <div className="w-24">
                       <label className={labelClass}>Mandatory</label>

@@ -1,17 +1,18 @@
 "use client";
 
-import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
-import Swal from "sweetalert2";
+import { AppSelectPicker } from "@/app/components/common/AppSelectPicker";
+import { BackLink } from "@/app/components/common/BackLink";
+import { buttonClass, primaryButtonClass } from "@/app/components/common/ui";
+import MockTestStatusSelect from "@/app/components/exams/MockTestStatusSelect";
 import ShapeDesignerFields from "@/app/components/exams/ShapeDesignerFields";
 import StartFromTemplateField from "@/app/components/exams/StartFromTemplateField";
-import MockTestStatusSelect from "@/app/components/exams/MockTestStatusSelect";
-import { AppSelectPicker } from "@/app/components/common/AppSelectPicker";
-import { buttonClass, primaryButtonClass } from "@/app/components/common/ui";
 import { createMockTestFromDraft, updateMockTestFromDraft } from "@/app/lib/exams/actions";
-import { notify } from "@/app/lib/shared/toast";
-import { emptyTemplateDraft, filterJsonToTemplateDraft, validateShapeDraft, type TemplateDraft } from "@/app/lib/exams/schema";
 import type { BlueprintTemplateListItem } from "@/app/lib/exams/data";
+import { emptyTemplateDraft, filterJsonToTemplateDraft, validateShapeDraft, type TemplateDraft } from "@/app/lib/exams/schema";
+import { notify } from "@/app/lib/shared/toast";
+import { useRouter } from "next/navigation";
+import { useState, useTransition } from "react";
+import Swal from "sweetalert2";
 
 import { toValueRecord, type ServiceOption } from "@/app/lib/db/serviceOptions";
 
@@ -157,7 +158,10 @@ export default function ExamDesigner({
     <div className="flex flex-col gap-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-lg font-semibold text-zinc-900">{isEdit ? "Edit exam" : "Design an exam"}</h1>
+          <div className="flex gap-x-3 items-center">
+            <BackLink href="/exam-designer" label="All exams" />
+            <h1 className="mt-2 text-lg font-semibold text-zinc-900">{isEdit ? "Edit exam" : "Design an exam"}</h1>
+          </div>
           <p className="mt-1 text-sm text-zinc-500">
             {isEdit
               ? "Adjust the name, test kind, timing, marking or sections of this draft exam."

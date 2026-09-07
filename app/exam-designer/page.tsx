@@ -59,7 +59,7 @@ export default async function MockTestsPage({
           <thead className="bg-zinc-50 text-xs uppercase text-zinc-500">
             <tr>
               <th className="px-4 py-2">Name</th>
-              <th className="px-4 py-2">Paper</th>
+              <th className="px-4 py-2">Exam Type</th>
               <th className="px-4 py-2">Marks</th>
               <th className="px-4 py-2">Duration</th>
               <th className="px-4 py-2">Status</th>
@@ -74,7 +74,7 @@ export default async function MockTestsPage({
                   {m.name}
                   <div className="font-mono text-xs text-zinc-400">{m.code}</div>
                 </td>
-                <td className="px-4 py-2 text-zinc-600">{m.paperName}</td>
+                <td className="px-4 py-2 text-zinc-600">{m.testKindName}</td>
                 <td className="px-4 py-2 text-zinc-600">{m.totalMarks}</td>
                 <td className="px-4 py-2 text-zinc-600">{m.durationMin} min</td>
                 <td className="px-4 py-2">
