@@ -1,16 +1,18 @@
 "use server";
 
-import crypto from "node:crypto";
-import { revalidatePath } from "next/cache";
 import { Prisma } from "@/app/generated/prisma/client";
-import { prisma } from "@/app/lib/db/prisma";
 import { requireUser, type CurrentUser } from "@/app/lib/auth/auth";
+import { prisma } from "@/app/lib/db/prisma";
+import { getServiceOptions } from "@/app/lib/db/serviceConfig";
+import { toValueRecord } from "@/app/lib/db/serviceOptions";
 import {
   listQuestionIdsForFilter,
   listQuestions,
   type QuestionListFilters,
   type QuestionListItem,
 } from "@/app/lib/questions/data";
+import { revalidatePath } from "next/cache";
+import crypto from "node:crypto";
 import { FALLBACK_CATALOG } from "./constants";
 import {
   buildFilterJsonFromDraft,
@@ -21,8 +23,6 @@ import {
   type MockTestRecipe,
   type TemplateDraft,
 } from "./schema";
-import { getServiceOptions } from "@/app/lib/db/serviceConfig";
-import { toValueRecord } from "@/app/lib/db/serviceOptions";
 
 type Tx = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
 
@@ -344,7 +344,11 @@ export async function updateMockTestFromDraft(
 
   const [existing, EXAM_STATUS] = await Promise.all([
     prisma.mockTest.findFirst({
-      where: { MockTestId: id, IsDeleted: false, FranchiseId: currentUser.franchiseId },
+      where: {
+        MockTestId: id,
+        IsDeleted: false,
+        FranchiseId: currentUser.franchiseId,
+      },
     }),
     getExamStatus(),
   ]);
@@ -572,7 +576,11 @@ export async function changeMockTestStatus(
     return { ok: false, error: "Invalid status." };
 
   const existing = await prisma.mockTest.findFirst({
-    where: { MockTestId: id, IsDeleted: false, FranchiseId: currentUser.franchiseId },
+    where: {
+      MockTestId: id,
+      IsDeleted: false,
+      FranchiseId: currentUser.franchiseId,
+    },
   });
   if (!existing) return { ok: false, error: "Exam not found." };
   if (existing.Status === toStatus)
@@ -660,7 +668,11 @@ export async function deleteMockTest(
   }
 
   const existing = await prisma.mockTest.findFirst({
-    where: { MockTestId: id, IsDeleted: false, FranchiseId: currentUser.franchiseId },
+    where: {
+      MockTestId: id,
+      IsDeleted: false,
+      FranchiseId: currentUser.franchiseId,
+    },
   });
   if (!existing) return { ok: false, error: "Exam not found." };
 
@@ -672,6 +684,109 @@ export async function deleteMockTest(
 
   revalidatePath("/exam-designer");
 
+  return { ok: true };
+}
+
+export type UpdateMockTestPackagesResult =
+  | { ok: true }
+  | { ok: false; error: string };
+
+// Replaces the full set of Package links for one exam — soft-delete only,
+// matched by (MockTestId, PackageId), same convention as every other write
+// in this file. A package the admin unchecks gets its row flipped to
+// IsDeleted=1 rather than removed; re-checking a package that was linked
+// before reactivates that same row (IsDeleted=0) instead of inserting a
+// duplicate — only a package that's never been linked to this exam at all
+// gets a brand-new row. ModifiedBy/ModifiedOn are stamped on every row that
+// actually changes state; untouched rows are left alone. Only the LMS's
+// PackageId is stored — there's no PackageName column, so display names are
+// always resolved live from listPackageOptions() rather than a saved
+// snapshot.
+export async function updateMockTestPackages(
+  mockTestId: string,
+  packageIds: number[],
+): Promise<UpdateMockTestPackagesResult> {
+  const currentUser = await requireUser();
+
+  let id: bigint;
+  try {
+    id = BigInt(mockTestId);
+  } catch {
+    return { ok: false, error: "Invalid exam id." };
+  }
+
+  const existing = await prisma.mockTest.findFirst({
+    where: {
+      MockTestId: id,
+      IsDeleted: false,
+      FranchiseId: currentUser.franchiseId,
+    },
+  });
+  if (!existing) return { ok: false, error: "Exam not found." };
+
+  // Unlike MockTest's own FranchiseId, MockTestPackage.FranchiseId is
+  // NOT NULL — guard here instead of letting a null through to a raw DB
+  // constraint violation.
+  if (currentUser.franchiseId === null) {
+    return {
+      ok: false,
+      error: "Your account has no franchise assigned; cannot link packages.",
+    };
+  }
+  const franchiseId = currentUser.franchiseId;
+
+  const uniqueIds = [...new Set(packageIds)];
+  const desired = new Set(uniqueIds);
+
+  // Soft-delete only, matched by (MockTestId, PackageId) — a package the
+  // admin unchecks gets its row flipped to IsDeleted=1 rather than removed;
+  // re-checking a package that was linked before reactivates that same row
+  // instead of inserting a duplicate. Only a package that's never been
+  // linked to this exam at all gets a brand-new row. ModifiedBy/ModifiedOn
+  // are stamped on every row that actually changes state; untouched rows
+  // are left alone.
+  try {
+    await prisma.$transaction(async (tx) => {
+      const existingLinks = await tx.mockTestPackage.findMany({
+        where: { MockTestId: id },
+        select: { TestPackageId: true, PackageId: true, IsDeleted: true },
+      });
+      const existingPackageIds = new Set(existingLinks.map((l) => Number(l.PackageId)));
+
+      for (const link of existingLinks) {
+        const shouldBeActive = desired.has(Number(link.PackageId));
+        if (shouldBeActive === !link.IsDeleted) continue; // already in the right state
+
+        await tx.mockTestPackage.update({
+          where: { TestPackageId: link.TestPackageId },
+          data: {
+            IsDeleted: !shouldBeActive,
+            ModifiedBy: currentUser.id,
+            ModifiedOn: new Date(),
+          },
+        });
+      }
+
+      const newPackageIds = uniqueIds.filter((packageId) => !existingPackageIds.has(packageId));
+      for (const packageId of newPackageIds) {
+        await tx.mockTestPackage.create({
+          data: {
+            MockTestId: id,
+            PackageId: BigInt(packageId),
+            CreatedBy: currentUser.id,
+            FranchiseId: franchiseId,
+          },
+        });
+      }
+    });
+  } catch (e) {
+    return {
+      ok: false,
+      error: e instanceof Error ? e.message : "Failed to save package links.",
+    };
+  }
+
+  revalidatePath("/exam-designer");
   return { ok: true };
 }
 
@@ -743,7 +858,11 @@ export async function updateBlueprintTemplate(
   // template can only be updated by master, and no franchise (master
   // included) can update another franchise's template.
   const existing = await prisma.blueprintTemplate.findFirst({
-    where: { TemplateId: id, IsDeleted: false, FranchiseId: currentUser.franchiseId },
+    where: {
+      TemplateId: id,
+      IsDeleted: false,
+      FranchiseId: currentUser.franchiseId,
+    },
   });
   if (!existing) return { ok: false, error: "Template not found." };
 
@@ -839,7 +958,11 @@ async function loadDraftSectionContext(
 
   const [mockTest, EXAM_STATUS] = await Promise.all([
     prisma.mockTest.findFirst({
-      where: { MockTestId: mtId, IsDeleted: false, FranchiseId: currentUser.franchiseId },
+      where: {
+        MockTestId: mtId,
+        IsDeleted: false,
+        FranchiseId: currentUser.franchiseId,
+      },
     }),
     getExamStatus(),
   ]);

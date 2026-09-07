@@ -95,6 +95,11 @@ export async function listTestKinds(): Promise<{ code: string; name: string }[]>
   return rows.map((r) => ({ code: r.Code, name: r.Name }));
 }
 
+// No local Package table (and MockTestPackage carries no name column
+// either) — a link is just the LMS's PackageId. Display names are resolved
+// by matching against listPackageOptions() at read time, in the UI layer.
+export type MockTestPackageLink = { packageId: string };
+
 export type MockTestListItem = {
   mockTestId: string;
   code: string;
@@ -106,6 +111,7 @@ export type MockTestListItem = {
   totalMarks: string;
   durationMin: number;
   createdOn: Date;
+  packages: MockTestPackageLink[];
 };
 
 export async function listMockTests(opts: { page: number; pageSize: number }): Promise<{ items: MockTestListItem[]; total: number }> {
@@ -119,6 +125,7 @@ export async function listMockTests(opts: { page: number; pageSize: number }): P
       include: {
         ExamPaper: { select: { Name: true, TotalMarks: true, DurationMin: true } },
         TestKind: { select: { Name: true } },
+        MockTestPackage: { where: { IsDeleted: false }, select: { PackageId: true } },
       },
       skip: (opts.page - 1) * opts.pageSize,
       take: opts.pageSize,
@@ -139,6 +146,7 @@ export async function listMockTests(opts: { page: number; pageSize: number }): P
       totalMarks: r.ExamPaper.TotalMarks.toString(),
       durationMin: r.ExamPaper.DurationMin,
       createdOn: r.CreatedOn,
+      packages: r.MockTestPackage.map((p) => ({ packageId: p.PackageId.toString() })),
     })),
     total,
   };

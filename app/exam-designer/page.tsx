@@ -1,9 +1,11 @@
 import DeleteMockTestButton from "@/app/components/exams/DeleteMockTestButton";
+import LinkPackagesButton from "@/app/components/exams/LinkPackagesButton";
 import MockTestStatusBadge from "@/app/components/exams/MockTestStatusBadge";
 import { DataTable } from "@/app/components/table/DataTable";
 import { iconButtonClass, iconTextButtonClass, primaryButtonClass } from "@/app/components/common/ui";
 import { PAGE_SIZE_OPTIONS } from "@/app/lib/shared/constants";
 import { listMockTests } from "@/app/lib/exams/data";
+import { listPackageOptions } from "@/app/lib/exams/packages";
 import { getServiceOptions } from "@/app/lib/db/serviceConfig";
 import { valueByLabel } from "@/app/lib/db/serviceOptions";
 import Link from "next/link";
@@ -26,11 +28,14 @@ export default async function MockTestsPage({
     ? requestedPageSize
     : DEFAULT_PAGE_SIZE;
 
-  const [{ items, total }, examStatusOptions] = await Promise.all([
+  const [{ items, total }, examStatusOptions, packageOptionsResult] = await Promise.all([
     listMockTests({ page, pageSize }),
     getServiceOptions("EXAM_STATUS"),
+    listPackageOptions(),
   ]);
   const draftStatusValue = valueByLabel(examStatusOptions, "DRAFT");
+  const packageOptions = packageOptionsResult.ok ? packageOptionsResult.options : [];
+  const packagesError = packageOptionsResult.ok ? null : packageOptionsResult.error;
 
   return (
     <div className="flex w-full flex-1 flex-col gap-4 px-6 py-8">
@@ -95,6 +100,13 @@ export default async function MockTestsPage({
                     >
                       <FiPlusCircle size={13} /> Add Questions
                     </Link>
+                    <LinkPackagesButton
+                      mockTestId={m.mockTestId}
+                      examName={m.name}
+                      packageOptions={packageOptions}
+                      packagesError={packagesError}
+                      initialPackages={m.packages}
+                    />
                     {m.status === draftStatusValue && (
                       <Link href={`/exam-designer/${m.mockTestId}`} className={iconButtonClass} title="Edit exam">
                         <FiEdit2 size={13} />

@@ -338,10 +338,37 @@ model MockTest {
   Branch              Branch?                  @relation(fields: [BranchId], references: [BranchId], onDelete: NoAction, onUpdate: NoAction, map: "FK__MockTest__Branch__5224328E")
   ExamPaper           ExamPaper                @relation(fields: [PaperId], references: [PaperId], onUpdate: NoAction, map: "FK__MockTest__PaperI__531856C7")
   TestKind            TestKind                 @relation(fields: [TestKindId], references: [TestKindId], onUpdate: NoAction, map: "FK__MockTest__TestKi__540C7B00")
+  MockTestPackage     MockTestPackage[]
   TestPool            TestPool[]
   TestQuestion        TestQuestion[]
 
   @@index([FranchiseId, Status, TestKindId], map: "IX_MockTest_Franchise", where: raw("([IsDeleted]=(0))"))
+}
+
+// Links a MockTest to a Package from the external LMS (no local Package
+// table exists — the id is resolved to a display name at read time against
+// app/lib/exams/packages.ts's listPackageOptions(), never stored). Shaped to
+// match the table as actually created (surrogate TestPackageId PK, not a
+// composite one — nothing stops the same MockTestId/PackageId pair from
+// being inserted twice, but updateMockTestPackages always replaces the full
+// set for a MockTest in one transaction, so duplicates never accumulate in
+// practice). Constraint/index names are hand-chosen — re-run `prisma db
+// pull` to pick up SQL Server's actual generated names if this ever gets
+// formally introspected.
+model MockTestPackage {
+  TestPackageId BigInt    @id(map: "PK_MockTestPackage") @default(autoincrement())
+  PackageId     BigInt
+  MockTestId    BigInt
+  FranchiseId   BigInt
+  IsDeleted     Boolean   @default(false)
+  CreatedBy     String?   @db.NVarChar(450)
+  CreatedOn     DateTime  @default(now()) @db.DateTime
+  ModifiedBy    String?   @db.NVarChar(450)
+  ModifiedOn    DateTime? @db.DateTime
+  MockTest      MockTest  @relation(fields: [MockTestId], references: [MockTestId], onUpdate: NoAction, map: "FK_MockTestPackage_MockTest")
+
+  @@index([MockTestId], map: "IX_MockTestPackage_MockTest")
+  @@index([PackageId], map: "IX_MockTestPackage_Package")
 }
 
 model PaperSection {
