@@ -10,9 +10,8 @@ import {
   sectionLabelClass,
   subCardClass,
 } from "@/app/components/common/ui";
-import CreateTestKindModal from "@/app/components/exams/CreateTestKindModal";
 import { emptyTemplateSection, type TemplateDraft } from "@/app/lib/exams/schema";
-import { useMemo, useRef, useState, type ReactNode } from "react";
+import { useMemo, useRef, type ReactNode } from "react";
 import { FiPlus, FiTrash2 } from "react-icons/fi";
 
 // A small on/off pill — negative marking is optional per section, off by
@@ -69,19 +68,14 @@ export default function ShapeDesignerFields({
   // not just discovered later on save or on the question picker page.
   pickedBySectionId?: Record<string, number>;
 }) {
-  const [customKinds, setCustomKinds] = useState<{ code: string; name: string }[]>([]);
-  const [kindModalOpen, setKindModalOpen] = useState(false);
   // Remembers each section's last non-zero negative value so switching the
   // toggle off then back on restores it instead of resetting to a default.
   const lastNegativeRef = useRef<Record<string, number>>({});
 
-  const testKindOptions = useMemo(() => {
-    const merged = [...testKinds];
-    for (const k of customKinds) {
-      if (!merged.some((m) => m.code === k.code)) merged.push(k);
-    }
-    return merged.map((k) => ({ label: `${k.name} (${k.code})`, value: k.code }));
-  }, [testKinds, customKinds]);
+  const testKindOptions = useMemo(
+    () => testKinds.map((k) => ({ label: `${k.name} (${k.code})`, value: k.code })),
+    [testKinds],
+  );
 
   const totals = useMemo(() => {
     const totalQuestions = draft.sections.reduce((sum, s) => sum + (Number(s.questions) || 0), 0);
@@ -91,13 +85,8 @@ export default function ShapeDesignerFields({
 
   function handleTestKindPick(code: string | null) {
     if (!code) return;
-    const kind = [...testKinds, ...customKinds].find((k) => k.code === code);
+    const kind = testKinds.find((k) => k.code === code);
     setDraft((d) => ({ ...d, testKindCode: code, testKindName: kind?.name ?? d.testKindName }));
-  }
-
-  function handleCreateTestKind(kind: { code: string; name: string }) {
-    setCustomKinds((prev) => (prev.some((k) => k.code === kind.code) ? prev : [...prev, kind]));
-    setDraft((d) => ({ ...d, testKindCode: kind.code, testKindName: kind.name }));
   }
 
   function updateSection(clientId: string, patch: Partial<TemplateDraft["sections"][number]>) {
@@ -139,17 +128,7 @@ export default function ShapeDesignerFields({
             />
           </div>
           <div className="md:col-span-3">
-            <div className="flex items-center justify-between gap-2">
-              <label className={labelClass}>Test kind</label>
-              <button
-                type="button"
-                className="text-xs font-medium text-zinc-500 hover:text-zinc-900 disabled:cursor-not-allowed disabled:opacity-40"
-                onClick={() => setKindModalOpen(true)}
-                disabled={disabled}
-              >
-                + New
-              </button>
-            </div>
+            <label className={labelClass}>Test kind</label>
             <AppSelectPicker
               data={testKindOptions}
               value={draft.testKindCode || null}
@@ -196,8 +175,6 @@ export default function ShapeDesignerFields({
             <span className="font-medium text-zinc-700">{totals.totalMarks}</span> marks
           </span>
         </div>
-
-        <CreateTestKindModal open={kindModalOpen} onClose={() => setKindModalOpen(false)} onCreate={handleCreateTestKind} />
       </div>
 
       <div className={cardClass}>

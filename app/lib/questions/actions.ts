@@ -129,7 +129,7 @@ async function resolveTagIds(
 
   // Dimensions have no rowversion column, so the normal query builder works fine here.
   const existingDimensions = await tx.tagDimension.findMany({
-    where: { IsDeleted: false },
+    where: { IsDeleted: false, FranchiseId: currentUser.franchiseId },
   });
   const dimensionByLower = new Map<string, { DimensionId: number }>();
   const existingCodesLower = new Set<string>();
@@ -168,7 +168,7 @@ async function resolveTagIds(
   const relevantDimensionIds = [...new Set(dimensionIdByKeyLower.values())];
   const existingTags = relevantDimensionIds.length
     ? await tx.tag.findMany({
-        where: { DimensionId: { in: relevantDimensionIds }, IsDeleted: false },
+        where: { DimensionId: { in: relevantDimensionIds }, IsDeleted: false, FranchiseId: currentUser.franchiseId },
       })
     : [];
   const tagIdByDimAndNameLower = new Map<string, bigint>();

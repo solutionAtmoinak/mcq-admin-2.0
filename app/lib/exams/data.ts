@@ -112,6 +112,7 @@ export type MockTestListItem = {
   durationMin: number;
   createdOn: Date;
   packages: MockTestPackageLink[];
+  questionCount: number;
 };
 
 export async function listMockTests(opts: { page: number; pageSize: number }): Promise<{ items: MockTestListItem[]; total: number }> {
@@ -134,6 +135,20 @@ export async function listMockTests(opts: { page: number; pageSize: number }): P
     getServiceOptions("EXAM_STATUS"),
   ]);
   const statusLabels = toLabelRecord(examStatusOptions);
+
+  // Same groupBy-by-MockTestId pattern changeMockTestStatus already uses
+  // (there grouped by SectionId instead) — one query for the whole page's
+  // picked-question counts rather than one per row.
+  const mockTestIds = rows.map((r) => r.MockTestId);
+  const questionCounts = mockTestIds.length
+    ? await prisma.testQuestion.groupBy({
+        by: ["MockTestId"],
+        where: { MockTestId: { in: mockTestIds }, IsDeleted: false },
+        _count: { _all: true },
+      })
+    : [];
+  const questionCountByMockTestId = new Map(questionCounts.map((c) => [c.MockTestId.toString(), c._count._all]));
+
   return {
     items: rows.map((r) => ({
       mockTestId: r.MockTestId.toString(),
@@ -147,6 +162,7 @@ export async function listMockTests(opts: { page: number; pageSize: number }): P
       durationMin: r.ExamPaper.DurationMin,
       createdOn: r.CreatedOn,
       packages: r.MockTestPackage.map((p) => ({ packageId: p.PackageId.toString() })),
+      questionCount: questionCountByMockTestId.get(r.MockTestId.toString()) ?? 0,
     })),
     total,
   };

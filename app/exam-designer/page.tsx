@@ -99,6 +99,7 @@ export default async function MockTestsPage({
                       title="Add questions"
                     >
                       <FiPlusCircle size={13} /> Add Questions
+                      <span className="rounded-full bg-zinc-100 px-1.5 text-xs text-zinc-600">{m.questionCount}</span>
                     </Link>
                     <LinkPackagesButton
                       mockTestId={m.mockTestId}

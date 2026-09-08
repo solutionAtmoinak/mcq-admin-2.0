@@ -892,6 +892,49 @@ export async function updateBlueprintTemplate(
   return { ok: true };
 }
 
+export type DeleteBlueprintTemplateResult =
+  | { ok: true }
+  | { ok: false; error: string };
+
+// Soft delete only, matching deleteMockTest's convention. Same strict
+// ownership rule as updateBlueprintTemplate — a franchise can only delete
+// its own templates, never a master template it merely sees read-only (and
+// master, symmetrically, can only ever match its own rows here too).
+export async function deleteBlueprintTemplate(
+  templateId: string,
+): Promise<DeleteBlueprintTemplateResult> {
+  const currentUser = await requireUser();
+
+  let id: bigint;
+  try {
+    id = BigInt(templateId);
+  } catch {
+    return { ok: false, error: "Invalid template id." };
+  }
+
+  const existing = await prisma.blueprintTemplate.findFirst({
+    where: {
+      TemplateId: id,
+      IsDeleted: false,
+      FranchiseId: currentUser.franchiseId,
+    },
+  });
+  if (!existing) return { ok: false, error: "Template not found." };
+
+  await prisma.blueprintTemplate.update({
+    where: { TemplateId: id },
+    data: {
+      IsDeleted: true,
+      ModifiedBy: currentUser.id,
+      ModifiedOn: new Date(),
+    },
+  });
+
+  revalidatePath("/exam-templates");
+
+  return { ok: true };
+}
+
 // ---------------------------------------------------------------------------
 // Question picker — searching the bank and editing a draft exam's per-
 // section question picks. This is never a one-shot operation: any of it can

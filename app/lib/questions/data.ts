@@ -1,5 +1,5 @@
 import { prisma } from "@/app/lib/db/prisma";
-import { requireAuth, requireUser } from "@/app/lib/auth/auth";
+import { requireUser } from "@/app/lib/auth/auth";
 import { getServiceOptions } from "@/app/lib/db/serviceConfig";
 import type { AttachedMedia } from "@/app/lib/auth/media";
 import type {
@@ -11,7 +11,7 @@ import type {
 import { emptyQuestion } from "./schema";
 
 export async function getReferenceData(): Promise<ReferenceData> {
-  await requireAuth();
+  const currentUser = await requireUser();
 
   const [questionTypes, dimensions, tags, questionStatusOptions, difficultyOptions] = await Promise.all([
     prisma.questionType.findMany({
@@ -19,11 +19,11 @@ export async function getReferenceData(): Promise<ReferenceData> {
       orderBy: { QuestionTypeId: "asc" },
     }),
     prisma.tagDimension.findMany({
-      where: { IsDeleted: false, IsActive: true },
+      where: { IsDeleted: false, IsActive: true, FranchiseId: currentUser.franchiseId },
       orderBy: { Name: "asc" },
     }),
     prisma.tag.findMany({
-      where: { IsDeleted: false, IsActive: true },
+      where: { IsDeleted: false, IsActive: true, FranchiseId: currentUser.franchiseId },
       orderBy: { Name: "asc" },
     }),
     getServiceOptions("QUESTION_STATUS"),
