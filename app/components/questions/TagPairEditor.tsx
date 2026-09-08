@@ -38,6 +38,7 @@ export function TagPairEditor({
 
   return (
     <div className="flex flex-col gap-2">
+      <p className="text-xs text-zinc-400">Type to add a new key or value — it&apos;s created automatically when you save.</p>
       {tags.map((tag, i) => {
         const matchedDim = dimensionByLowerName.get(tag.key.trim().toLowerCase());
         const valueOptions: Option[] = matchedDim
