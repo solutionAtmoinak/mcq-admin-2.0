@@ -41,19 +41,34 @@ export function TagPairEditor({
       <p className="text-xs text-zinc-400">Type to add a new key or value — it&apos;s created automatically when you save.</p>
       {tags.map((tag, i) => {
         const matchedDim = dimensionByLowerName.get(tag.key.trim().toLowerCase());
-        const valueOptions: Option[] = matchedDim
+        const knownValueOptions: Option[] = matchedDim
           ? (referenceData.tagsByDimensionId[matchedDim.id] ?? []).map((v) => ({ label: v.name, value: v.name }))
           : [];
         const isNewKey = !!tag.key.trim() && !matchedDim;
         const isNewValue =
           !!tag.value.trim() &&
           !!matchedDim &&
-          !valueOptions.some((v) => v.value.toLowerCase() === tag.value.trim().toLowerCase());
+          !knownValueOptions.some((v) => v.value.toLowerCase() === tag.value.trim().toLowerCase());
+
+        // A key/value that was just typed, or just came in via import and
+        // hasn't been saved yet, won't be in referenceData — make sure it's
+        // still in `data` so the picker has something to match `value`
+        // against. Without this, rsuite's InputPicker can render blank for
+        // a value it can't find in its options list, even though the
+        // underlying state (tag.key/tag.value) is set correctly.
+        const keyOptions: Option[] =
+          tag.key && !dimensionOptions.some((o) => o.value === tag.key)
+            ? [...dimensionOptions, { label: tag.key, value: tag.key }]
+            : dimensionOptions;
+        const valueOptions: Option[] =
+          tag.value && !knownValueOptions.some((o) => o.value === tag.value)
+            ? [...knownValueOptions, { label: tag.value, value: tag.value }]
+            : knownValueOptions;
 
         return (
           <div key={i} className="flex flex-wrap items-center gap-1.5">
             <InputPicker
-              data={dimensionOptions}
+              data={keyOptions}
               value={tag.key || null}
               onChange={(v) => onUpdate(i, { key: v ?? "" })}
               creatable
