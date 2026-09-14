@@ -361,7 +361,13 @@ export async function getQuestionForEdit(questionId: string): Promise<EditableQu
     options?: { id: string; text: string; media?: AttachedMedia }[];
     responseType?: string;
   } = {};
-  let answer: { correct?: string[] | number | string; marks?: number; negative?: number; explanation?: string } = {};
+  let answer: {
+    correct?: string[] | number | string;
+    marks?: number;
+    negative?: number;
+    explanation?: string;
+    explanationMedia?: AttachedMedia;
+  } = {};
   if (version) {
     try {
       presentation = JSON.parse(version.PresentationJson);
@@ -392,6 +398,7 @@ export async function getQuestionForEdit(questionId: string): Promise<EditableQu
     marks: answer.marks ?? 4,
     negativeMarks: answer.negative ?? 1,
     explanation: answer.explanation ?? "",
+    explanationMedia: answer.explanationMedia ?? null,
     tags: q.QuestionTag.length
       ? q.QuestionTag.map((qt) => ({ key: qt.Tag.TagDimension.Name, value: qt.Tag.Name }))
       : [{ key: "", value: "" }],

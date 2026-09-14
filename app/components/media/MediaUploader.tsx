@@ -205,16 +205,29 @@ export function MediaUploader({
 
 function MediaPreview({ kind, src }: { kind: MediaKind; src: string }) {
   if (kind === "image") {
+    // Aspect-ratio box + overflow-hidden, not just h-20/object-cover on the
+    // <img> alone — a bare fixed-height image can still be forced wide by
+    // an ancestor that won't shrink (e.g. a <fieldset>'s browser-default
+    // min-width: min-content), which stretches the whole row without ever
+    // capping the image's rendered box. Tying height to width via
+    // aspect-ratio keeps the thumbnail responsive regardless of what an
+    // ancestor does.
     return (
-      // eslint-disable-next-line @next/next/no-img-element -- blob:/api-served urls, not a static asset next/image can optimize
-      <img src={src} alt="" className="h-20 w-full rounded object-cover" />
+      <div className="aspect-square w-full min-w-0 overflow-hidden rounded">
+        {/* eslint-disable-next-line @next/next/no-img-element -- blob:/api-served urls, not a static asset next/image can optimize */}
+        <img src={src} alt="" className="h-full w-full object-cover" />
+      </div>
     );
   }
   if (kind === "audio") {
-    return <audio src={src} controls className="w-full" />;
+    return <audio src={src} controls className="w-full max-w-full" />;
   }
   if (kind === "video") {
-    return <video src={src} controls className="h-20 w-full rounded object-cover" />;
+    return (
+      <div className="aspect-video w-full min-w-0 overflow-hidden rounded">
+        <video src={src} controls className="h-full w-full object-cover" />
+      </div>
+    );
   }
   return (
     <a href={src} target="_blank" rel="noreferrer" className="block truncate text-sm text-blue-600 underline">

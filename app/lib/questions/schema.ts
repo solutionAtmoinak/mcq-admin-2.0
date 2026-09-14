@@ -41,6 +41,12 @@ export type QuestionInput = {
   marks: number;
   negativeMarks: number;
   explanation: string;
+  // Optional image/audio/video attached to the answer explanation — shown
+  // alongside `explanation` on the student result page, never during the
+  // exam itself (explanation only ever ships inside AnswerJson, which the
+  // exam-taking modes never select — see student-portal's
+  // spMcqStudentService.sql header). Absent/null means no attachment.
+  explanationMedia?: AttachedMedia | null;
   tags: TagPair[];
 };
 
@@ -161,6 +167,7 @@ export type BuiltContent = {
 export function buildContent(q: QuestionInput): BuiltContent {
   const explanation = q.explanation.trim();
   const questionMedia = q.media ? { media: q.media } : {};
+  const explanationMedia = q.explanationMedia ? { explanationMedia: q.explanationMedia } : {};
 
   if (isOptionBasedType(q.typeCode)) {
     const options = q.options
@@ -177,6 +184,7 @@ export function buildContent(q: QuestionInput): BuiltContent {
         marks: q.marks,
         negative: q.negativeMarks,
         ...(explanation ? { explanation } : {}),
+        ...explanationMedia,
       },
     };
   }
@@ -189,6 +197,7 @@ export function buildContent(q: QuestionInput): BuiltContent {
         marks: q.marks,
         negative: q.negativeMarks,
         ...(explanation ? { explanation } : {}),
+        ...explanationMedia,
       },
     };
   }
@@ -201,6 +210,7 @@ export function buildContent(q: QuestionInput): BuiltContent {
       marks: q.marks,
       negative: q.negativeMarks,
       ...(explanation ? { explanation } : {}),
+      ...explanationMedia,
     },
   };
 }

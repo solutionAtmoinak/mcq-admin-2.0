@@ -1,7 +1,6 @@
 "use client";
 
 import { Modal } from "rsuite";
-import { MediaAttachmentField } from "@/app/components/media/MediaAttachmentField";
 import { TagPairEditor } from "@/app/components/questions/TagPairEditor";
 import { inputClass, labelClass, subCardClassLight, subSectionLabelClass } from "@/app/components/common/ui";
 import type { QuestionInput, ReferenceData, TagPair } from "@/app/lib/questions/schema";
@@ -68,11 +67,6 @@ export default function QuestionOptionalSettingsModal({
                 />
               </div>
             </div>
-          </div>
-
-          <div className={subCardClassLight}>
-            <h3 className={subSectionLabelClass}>Media</h3>
-            <MediaAttachmentField media={data.media} onChange={(media) => onUpdate({ media })} />
           </div>
 
           <div className={subCardClassLight}>

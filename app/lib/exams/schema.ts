@@ -90,6 +90,10 @@ export type TemplateDraft = {
   durationMin: number;
   markingSchemeName: string;
   sections: TemplateSectionDraft[];
+  // Shown to the student in a T&C-style modal before they enter the exam
+  // (see MockTest.Instructions) — lives only on the materialized MockTest,
+  // never on a BlueprintTemplate, so it's not part of BlueprintFilterJson.
+  instructions: string;
 };
 
 export function emptyTemplateSection(): TemplateSectionDraft {
@@ -106,6 +110,7 @@ export function emptyTemplateDraft(): TemplateDraft {
     durationMin: 180,
     markingSchemeName: "Standard Marking",
     sections: [emptyTemplateSection()],
+    instructions: "",
   };
 }
 
@@ -119,6 +124,9 @@ export function filterJsonToTemplateDraft(filterJson: BlueprintFilterJson): Temp
     testKindName: filterJson.testKind?.name ?? "Mock Test",
     durationMin: filterJson.examPaper.DurationMin,
     markingSchemeName: filterJson.markingScheme.Name,
+    // Instructions live only on the materialized MockTest, never on the
+    // template itself — starting from a template always begins blank.
+    instructions: "",
     sections: filterJson.paperSections.map((s) => ({
       clientId: nextClientId(),
       name: s.Name,
@@ -143,6 +151,7 @@ export function buildTemplateDraftFromExam(input: {
   testKindName: string;
   durationMin: number;
   markingSchemeName: string;
+  instructions: string;
   sections: {
     sectionId: string;
     name: string;
@@ -159,6 +168,7 @@ export function buildTemplateDraftFromExam(input: {
     testKindName: input.testKindName,
     durationMin: input.durationMin,
     markingSchemeName: input.markingSchemeName,
+    instructions: input.instructions,
     sections: input.sections.map((s) => ({
       clientId: nextClientId(),
       sectionId: s.sectionId,

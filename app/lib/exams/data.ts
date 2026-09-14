@@ -118,7 +118,11 @@ export type MockTestListItem = {
 export async function listMockTests(opts: { page: number; pageSize: number }): Promise<{ items: MockTestListItem[]; total: number }> {
   const currentUser = await requireUser();
 
-  const where = { IsDeleted: false, FranchiseId: currentUser.franchiseId };
+  // IsPersonalized rows are student-generated (see Mode 7 in
+  // student-portal/sql/spMcqStudentService.sql) — they're real MockTest
+  // rows but never admin-authored, so they don't belong in this list; a
+  // student reaches theirs directly at its own URL, never through here.
+  const where = { IsDeleted: false, FranchiseId: currentUser.franchiseId, IsPersonalized: false };
   const [rows, total, examStatusOptions] = await Promise.all([
     prisma.mockTest.findMany({
       where,
@@ -380,6 +384,7 @@ export async function getMockTestDraftForEdit(mockTestId: string): Promise<MockT
     testKindName: row.TestKind.Name,
     durationMin: row.ExamPaper.DurationMin,
     markingSchemeName: row.ExamPaper.MarkingScheme?.Name ?? "Standard Marking",
+    instructions: row.Instructions ?? "",
     sections: row.ExamPaper.PaperSection.map((s) => {
       const rules = JSON.parse(s.RulesJson) as {
         questionType: string;

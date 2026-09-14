@@ -26,6 +26,8 @@ import {
   primaryButtonClass,
   savedIconTextButtonClass,
   sectionLabelClass,
+  subCardClass,
+  subSectionLabelClass,
 } from "@/app/components/common/ui";
 
 const OPTION_MEDIA_ICON = {
@@ -200,100 +202,124 @@ export default function QuestionEditForm({
             </div>
           </div>
 
-          <div className="mb-4">
-            <label className={labelClass}>Question text</label>
-            <textarea
-              className={`${inputClass} h-32`}
-              value={data.stem}
-              onChange={(e) => update({ stem: e.target.value })}
-            />
-          </div>
+          <fieldset className={`${subCardClass} mb-4 min-w-0`}>
+            <legend className={subSectionLabelClass}>Question</legend>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
+              <div className="min-w-0 flex-1">
+                <label className={labelClass}>Question text</label>
+                <textarea
+                  className={`${inputClass} h-32`}
+                  value={data.stem}
+                  onChange={(e) => update({ stem: e.target.value })}
+                />
+              </div>
+              <div className="min-w-0 sm:w-60 sm:shrink-0">
+                <label className={labelClass}>Media (optional)</label>
+                <MediaAttachmentField media={data.media} onChange={(media) => update({ media })} />
+              </div>
+            </div>
+          </fieldset>
 
-          {optionBased ? (
-            <div className="mb-4">
-              <label className={labelClass}>
-                Options ({data.typeCode === "mcq_single" ? "select one correct answer" : "select all correct answers"})
-              </label>
-              <div className="flex flex-col gap-2">
-                {data.options.map((opt, i) => {
-                  const isCorrect = data.correctOptionIds.includes(opt.id);
-                  const MediaIcon = OPTION_MEDIA_ICON[opt.media?.kind ?? "attach"];
-                  return (
-                    <div
-                      key={i}
-                      className={`grid grid-cols-[auto_2.75rem_1fr_auto_auto] items-center gap-2 rounded-md px-2 py-1.5 transition-colors ${
-                        isCorrect ? "bg-emerald-50" : ""
-                      }`}
-                    >
-                      <input
-                        type={data.typeCode === "mcq_single" ? "radio" : "checkbox"}
-                        name="edit-correct"
-                        checked={isCorrect}
-                        onChange={() => toggleCorrect(opt.id)}
-                        title="Mark as correct"
-                      />
+          <fieldset className={`${subCardClass} mb-4 min-w-0`}>
+            <legend className={subSectionLabelClass}>{optionBased ? "Options" : "Answer"}</legend>
+            {optionBased ? (
+              <div>
+                <label className={labelClass}>
+                  Options ({data.typeCode === "mcq_single" ? "select one correct answer" : "select all correct answers"})
+                </label>
+                <div className="flex flex-col gap-2">
+                  {data.options.map((opt, i) => {
+                    const isCorrect = data.correctOptionIds.includes(opt.id);
+                    const MediaIcon = OPTION_MEDIA_ICON[opt.media?.kind ?? "attach"];
+                    return (
                       <div
-                        className={`flex items-center justify-center rounded-md border px-3 py-1.5 text-sm font-mono font-semibold select-none ${
-                          isCorrect
-                            ? "border-emerald-400 bg-emerald-100 text-emerald-800"
-                            : "border-zinc-300 bg-zinc-50 text-zinc-600"
+                        key={i}
+                        className={`grid grid-cols-[auto_2.75rem_1fr_auto_auto] items-center gap-2 rounded-md px-2 py-1.5 transition-colors ${
+                          isCorrect ? "bg-emerald-50" : ""
                         }`}
                       >
-                        {opt.id}
+                        <input
+                          type={data.typeCode === "mcq_single" ? "radio" : "checkbox"}
+                          name="edit-correct"
+                          checked={isCorrect}
+                          onChange={() => toggleCorrect(opt.id)}
+                          title="Mark as correct"
+                        />
+                        <div
+                          className={`flex items-center justify-center rounded-md border px-3 py-1.5 text-sm font-mono font-semibold select-none ${
+                            isCorrect
+                              ? "border-emerald-400 bg-emerald-100 text-emerald-800"
+                              : "border-zinc-300 bg-zinc-50 text-zinc-600"
+                          }`}
+                        >
+                          {opt.id}
+                        </div>
+                        <input
+                          className={inputClass}
+                          value={opt.text}
+                          onChange={(e) => updateOption(i, { text: e.target.value })}
+                          placeholder="Option text"
+                        />
+                        <button
+                          type="button"
+                          className={opt.media ? savedIconTextButtonClass : buttonClass}
+                          onClick={() => setMediaOptionIndex(i)}
+                          aria-label={`Attach media to option ${opt.id}`}
+                          title={opt.media ? `${opt.media.kind} attached` : "Attach image, audio or video"}
+                        >
+                          <MediaIcon size={13} />
+                        </button>
+                        <button
+                          className={buttonClass}
+                          onClick={() => removeOption(i)}
+                          disabled={data.options.length <= 2}
+                        >
+                          ✕
+                        </button>
                       </div>
-                      <input
-                        className={inputClass}
-                        value={opt.text}
-                        onChange={(e) => updateOption(i, { text: e.target.value })}
-                        placeholder="Option text"
-                      />
-                      <button
-                        type="button"
-                        className={opt.media ? savedIconTextButtonClass : buttonClass}
-                        onClick={() => setMediaOptionIndex(i)}
-                        aria-label={`Attach media to option ${opt.id}`}
-                        title={opt.media ? `${opt.media.kind} attached` : "Attach image, audio or video"}
-                      >
-                        <MediaIcon size={13} />
-                      </button>
-                      <button
-                        className={buttonClass}
-                        onClick={() => removeOption(i)}
-                        disabled={data.options.length <= 2}
-                      >
-                        ✕
-                      </button>
-                    </div>
-                  );
-                })}
+                    );
+                  })}
+                </div>
+                <button className={`${buttonClass} mt-2`} onClick={addOption} disabled={data.options.length >= 8}>
+                  + Add option
+                </button>
               </div>
-              <button className={`${buttonClass} mt-2`} onClick={addOption} disabled={data.options.length >= 8}>
-                + Add option
-              </button>
-            </div>
-          ) : (
-            <div className="mb-4">
-              <label className={labelClass}>
-                {data.typeCode === "integer" ? "Correct integer answer" : "Correct answer (one word)"}
-              </label>
-              <input
-                className={`${inputClass} w-40`}
-                value={data.correctValue}
-                onChange={(e) => update({ correctValue: e.target.value })}
-                placeholder={data.typeCode === "integer" ? "e.g. 42" : "e.g. Paris"}
-                autoComplete="off"
-              />
-            </div>
-          )}
+            ) : (
+              <div>
+                <label className={labelClass}>
+                  {data.typeCode === "integer" ? "Correct integer answer" : "Correct answer (one word)"}
+                </label>
+                <input
+                  className={`${inputClass} w-40`}
+                  value={data.correctValue}
+                  onChange={(e) => update({ correctValue: e.target.value })}
+                  placeholder={data.typeCode === "integer" ? "e.g. 42" : "e.g. Paris"}
+                  autoComplete="off"
+                />
+              </div>
+            )}
+          </fieldset>
 
-          <div>
-            <label className={labelClass}>Explanation (optional)</label>
-            <textarea
-              className={`${inputClass} h-20`}
-              value={data.explanation}
-              onChange={(e) => update({ explanation: e.target.value })}
-            />
-          </div>
+          <fieldset className={`${subCardClass} min-w-0`}>
+            <legend className={subSectionLabelClass}>Explanation</legend>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
+              <div className="min-w-0 flex-1">
+                <label className={labelClass}>Explanation (optional)</label>
+                <textarea
+                  className={`${inputClass} h-20`}
+                  value={data.explanation}
+                  onChange={(e) => update({ explanation: e.target.value })}
+                />
+              </div>
+              <div className="min-w-0 sm:w-60 sm:shrink-0">
+                <label className={labelClass}>Explanation media (optional)</label>
+                <MediaAttachmentField
+                  media={data.explanationMedia}
+                  onChange={(explanationMedia) => update({ explanationMedia })}
+                />
+              </div>
+            </div>
+          </fieldset>
         </section>
 
         {/* Sidebar */}
@@ -335,11 +361,6 @@ export default function QuestionEditForm({
                 />
               </div>
             </div>
-          </section>
-
-          <section className={cardClass}>
-            <h2 className={sectionLabelClass}>Media</h2>
-            <MediaAttachmentField media={data.media} onChange={(media) => update({ media })} />
           </section>
 
           <section className={cardClass}>

@@ -19,7 +19,7 @@ export default async function QuestionDetailPage({
     <div className="flex w-full flex-1 flex-col gap-4 px-6 py-8">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-3">
-          <BackLink href="/questions" label="Back" />
+          <BackLink label="Back" />
           <h1 className="mt-2 text-xl font-semibold text-zinc-900">{question.code}</h1>
         </div>
         <span className="text-xs text-zinc-400">

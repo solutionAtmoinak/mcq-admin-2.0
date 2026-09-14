@@ -63,6 +63,7 @@ export default function TemplateDesigner({
         onNameChange={(value) => setDraft({ ...draft, name: value })}
         nameLabel="Template name"
         namePlaceholder='e.g. "neet-ug-temp-2026"'
+        showInstructions={false}
       />
 
       <div className="flex justify-end gap-3">

@@ -141,6 +141,7 @@ async function materializeMockTest(
   templateIdForProvenance: string | null,
   currentUser: CurrentUser,
   initialStatus: number,
+  instructions: string,
 ): Promise<bigint> {
   const stageId = await resolveFallbackStageId(tx, currentUser);
   const testKind = filterJson.testKind ?? {
@@ -210,10 +211,16 @@ async function materializeMockTest(
     initialStatus === EXAM_STATUS.PUBLISHED
       ? Prisma.sql`GETDATE()`
       : Prisma.sql`NULL`;
+  const trimmedInstructions = instructions.trim();
+  // IsPersonalized is always 0 here — this is the ONLY MockTest-creation
+  // path in mcq-admin. The other one (1) lives entirely in the student
+  // portal's Mode 7 (personalized mock generation) — see
+  // student-portal/sql/spMcqStudentService.sql — and listMockTests filters
+  // those out of this app's exam list.
   const [mockTest] = await tx.$queryRaw<{ MockTestId: bigint }[]>(
-    Prisma.sql`INSERT INTO dbo.MockTest (Code, PaperId, TestKindId, Name, Status, PublishedOn, SelectionPolicyJson, CreatedBy, FranchiseId)
+    Prisma.sql`INSERT INTO dbo.MockTest (Code, PaperId, TestKindId, Name, Instructions, IsPersonalized, Status, PublishedOn, SelectionPolicyJson, CreatedBy, FranchiseId)
       OUTPUT INSERTED.MockTestId
-      VALUES (${code}, ${paper.PaperId}, ${testKindId}, ${filterJson.examPaper.Name}, ${initialStatus}, ${publishedOnSql}, ${JSON.stringify(mockTestRecipe)}, ${currentUser.id}, ${currentUser.franchiseId})`,
+      VALUES (${code}, ${paper.PaperId}, ${testKindId}, ${filterJson.examPaper.Name}, ${trimmedInstructions || null}, 0, ${initialStatus}, ${publishedOnSql}, ${JSON.stringify(mockTestRecipe)}, ${currentUser.id}, ${currentUser.franchiseId})`,
   );
 
   return mockTest.MockTestId;
@@ -288,6 +295,7 @@ export async function createMockTestFromDraft(
         templateId,
         currentUser,
         resolvedInitialStatus,
+        draft.instructions,
       ),
     );
   } catch (e) {
@@ -528,9 +536,10 @@ export async function updateMockTestFromDraft(
         sections: recipeSections,
       };
 
+      const trimmedInstructions = draft.instructions.trim();
       await tx.$executeRaw(
         Prisma.sql`UPDATE dbo.MockTest
-          SET Name = ${trimmedExamName}, TestKindId = ${testKindId}, SelectionPolicyJson = ${JSON.stringify(recipe)},
+          SET Name = ${trimmedExamName}, TestKindId = ${testKindId}, Instructions = ${trimmedInstructions || null}, SelectionPolicyJson = ${JSON.stringify(recipe)},
               ModifiedBy = ${currentUser.id}, ModifiedOn = GETDATE()
           WHERE MockTestId = ${id}`,
       );

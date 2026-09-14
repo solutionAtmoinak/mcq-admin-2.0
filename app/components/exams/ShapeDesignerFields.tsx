@@ -52,6 +52,7 @@ export default function ShapeDesignerFields({
   statusSlot,
   disabled = false,
   pickedBySectionId,
+  showInstructions = true,
 }: {
   draft: TemplateDraft;
   setDraft: (updater: TemplateDraft | ((d: TemplateDraft) => TemplateDraft)) => void;
@@ -67,6 +68,11 @@ export default function ShapeDesignerFields({
   // shrinking a section below its current picks is visible immediately,
   // not just discovered later on save or on the question picker page.
   pickedBySectionId?: Record<string, number>;
+  // Instructions live only on the materialized MockTest (see
+  // TemplateDraft.instructions) — never on a BlueprintTemplate, so the
+  // template-only designer (TemplateDesigner.tsx) hides this card entirely
+  // rather than showing a field that would silently be discarded on save.
+  showInstructions?: boolean;
 }) {
   // Remembers each section's last non-zero negative value so switching the
   // toggle off then back on restores it instead of resetting to a default.
@@ -176,6 +182,24 @@ export default function ShapeDesignerFields({
           </span>
         </div>
       </div>
+
+      {showInstructions && (
+        <div className={cardClass}>
+          <div>
+            <div className={sectionLabelClass}>Instructions</div>
+            <p className="text-xs text-zinc-400">
+              Shown to the student before they enter this exam. Leave blank to skip.
+            </p>
+          </div>
+          <textarea
+            className={`${inputClass} mt-2 h-28`}
+            value={draft.instructions}
+            onChange={(e) => setDraft({ ...draft, instructions: e.target.value })}
+            placeholder="e.g. This exam has 3 sections. Once started, the timer cannot be paused... etc. (Can uses raw html format)"
+            disabled={disabled}
+          />
+        </div>
+      )}
 
       <div className={cardClass}>
         <div className="mb-3 flex items-center justify-between">

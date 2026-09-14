@@ -318,6 +318,10 @@ model MockTest {
   TestKindId          Int                      @db.TinyInt
   Name                String                   @db.NVarChar(200)
   Instructions        String?                  @db.NVarChar(Max)
+  // 0 for every admin-authored exam; set to 1 only by the student portal's
+  // Mode 7 (personalized mock generation) — see listMockTests, which
+  // filters these out of the admin exam list.
+  IsPersonalized      Boolean                  @default(false)
   Status              Int                      @default(0, map: "DF__MockTest__Status__55009F39") @db.TinyInt
   SettingsJson        String?                  @db.NVarChar(Max)
   SelectionPolicyJson String?                  @db.NVarChar(Max)
