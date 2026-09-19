@@ -3,6 +3,7 @@
 import { AppSelectPicker } from "@/app/components/common/AppSelectPicker";
 import { BackLink } from "@/app/components/common/BackLink";
 import Drawer from "@/app/components/common/Drawer";
+import { MathTextPreview } from "@/app/components/common/MathText";
 import { MediaAttachmentField } from "@/app/components/media/MediaAttachmentField";
 import OptionMediaModal from "@/app/components/questions/OptionMediaModal";
 import QuestionOptionalSettingsModal from "@/app/components/questions/QuestionOptionalSettingsModal";
@@ -37,6 +38,7 @@ import {
   nextClientId,
   parseImportExcelRows,
   parseImportJson,
+  parseImportWordLines,
   validateQuestion,
   type OptionInput,
   type QuestionInput,
@@ -48,18 +50,31 @@ import { toLabelRecord, valueByLabel, type ServiceOption } from "@/app/lib/db/se
 import { notify } from "@/app/lib/shared/toast";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useId, useMemo, useRef, useState, useTransition, type ChangeEvent } from "react";
+import {
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  useTransition,
+  type ChangeEvent,
+  type ComponentType,
+  type ReactNode,
+} from "react";
 import * as XLSX from "xlsx";
 import {
   FiCheck,
   FiCopy,
+  FiCpu,
   FiEdit2,
+  FiFileText,
   FiImage,
   FiLoader,
   FiMusic,
   FiPaperclip,
   FiSave,
   FiSettings,
+  FiTable,
   FiTrash2,
   FiVideo,
 } from "react-icons/fi";
@@ -97,6 +112,30 @@ function stemPreview(stem: string): string {
   const trimmed = stem.trim();
   if (!trimmed) return "Untitled question";
   return trimmed.length > 70 ? `${trimmed.slice(0, 70)}…` : trimmed;
+}
+
+// True for a row nobody has typed anything into yet (the blank starter row
+// the page always opens with, or one left untouched after "+ Add row").
+function isRowContentEmpty(data: QuestionInput): boolean {
+  return (
+    data.stem.trim() === "" &&
+    data.options.every((o) => !o.text.trim()) &&
+    data.explanation.trim() === "" &&
+    data.correctValue.trim() === ""
+  );
+}
+
+// A bulk import (Excel/Word/JSON) always keeps whatever's already on the
+// page — unless the page is still just the untouched blank starter row, in
+// which case the imported questions take its place instead of stacking
+// after a pointless empty row. Never drops rows the import itself found
+// nothing to add.
+function mergeImportedRows(prev: Row[], imported: Row[]): Row[] {
+  if (imported.length === 0) return prev;
+  if (prev.length === 1 && !prev[0].saved && isRowContentEmpty(prev[0].data)) {
+    return imported;
+  }
+  return [...prev, ...imported];
 }
 
 type ActiveLot = { lotId: string; lotNo: string };
@@ -158,8 +197,8 @@ export default function QuestionBankEditor({
   const [importWarnings, setImportWarnings] = useState<string[]>([]);
   const [importError, setImportError] = useState<string | null>(null);
   const excelInputRef = useRef<HTMLInputElement>(null);
-  const [result, setResult] = useState<{ code: string; questionId: string }[] | null>(null);
-  const [submitError, setSubmitError] = useState<string | null>(null);
+  const wordInputRef = useRef<HTMLInputElement>(null);
+  const [isParsingWord, setIsParsingWord] = useState(false);
   const [isPending, startTransition] = useTransition();
 
   const [settingsForClientId, setSettingsForClientId] = useState<string | null>(null);
@@ -384,9 +423,23 @@ export default function QuestionBankEditor({
 
   function applyDefaultsToAll() {
     setRows((prev) => prev.map((r) => ({ ...r, data: { ...r.data, ...defaultOverrides() } })));
+    notify(`Applied defaults to ${rows.length} question${rows.length === 1 ? "" : "s"}.`, "success");
+    setDefaultsOpen(false);
   }
 
-  function handleParseImport(mode: "append" | "replace") {
+  // Closes the drawer and confirms via toast once an import comes through
+  // clean (no warnings, at least one question added). A partial import
+  // (some rows skipped) leaves the drawer open instead, so the warnings
+  // list below stays visible for review.
+  function finishBulkImport(newRowCount: number, warnings: string[], sourceLabel: string) {
+    setImportWarnings(warnings);
+    if (warnings.length === 0 && newRowCount > 0) {
+      notify(`Added ${newRowCount} question${newRowCount === 1 ? "" : "s"} from ${sourceLabel}.`, "success");
+      setImportOpen(false);
+    }
+  }
+
+  function handleParseImport() {
     setImportError(null);
     setImportWarnings([]);
     try {
@@ -395,9 +448,9 @@ export default function QuestionBankEditor({
         questionStatusOptions,
       );
       const newRows: Row[] = parsedRows.map((data) => ({ clientId: nextClientId(), data, saved: null }));
-      setRows((prev) => (mode === "replace" ? newRows : [...prev, ...newRows]));
-      setImportWarnings(warnings);
+      setRows((prev) => mergeImportedRows(prev, newRows));
       if (warnings.length === 0) setImportText("");
+      finishBulkImport(newRows.length, warnings, "the AI assistant");
     } catch (e) {
       setImportError((e as Error).message);
     }
@@ -407,9 +460,9 @@ export default function QuestionBankEditor({
     excelInputRef.current?.click();
   }
 
-  // Always appends — a bulk upload adding to what's already on the page
-  // (possibly other manually-typed or JSON-imported rows) should never
-  // silently discard those, so there's no "replace" mode here.
+  // Adds to what's already on the page (see mergeImportedRows) — a bulk
+  // upload should never silently discard rows already there, unless the
+  // page is still just the untouched blank starter row.
   async function handleExcelFile(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (excelInputRef.current) excelInputRef.current.value = "";
@@ -432,10 +485,40 @@ export default function QuestionBankEditor({
         questionStatusOptions,
       );
       const newRows: Row[] = parsedRows.map((data) => ({ clientId: nextClientId(), data, saved: null }));
-      setRows((prev) => [...prev, ...newRows]);
-      setImportWarnings(warnings);
+      setRows((prev) => mergeImportedRows(prev, newRows));
+      finishBulkImport(newRows.length, warnings, "your spreadsheet");
     } catch (err) {
       setImportError((err as Error).message);
+    }
+  }
+
+  function triggerWordUpload() {
+    wordInputRef.current?.click();
+  }
+
+  // Same merge behavior as the Excel path — see mergeImportedRows. Parsing
+  // (unzip + OMML->LaTeX conversion) is dynamically imported so its
+  // dependencies (jszip, fast-xml-parser) never load for users who don't
+  // use Word import.
+  async function handleWordFile(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (wordInputRef.current) wordInputRef.current.value = "";
+    if (!file) return;
+
+    setImportError(null);
+    setImportWarnings([]);
+    setIsParsingWord(true);
+    try {
+      const { extractWordImportLines } = await import("@/app/lib/questions/wordDocx");
+      const lines = await extractWordImportLines(file);
+      const { rows: parsedRows, warnings } = parseImportWordLines(lines, questionStatusOptions);
+      const newRows: Row[] = parsedRows.map((data) => ({ clientId: nextClientId(), data, saved: null }));
+      setRows((prev) => mergeImportedRows(prev, newRows));
+      finishBulkImport(newRows.length, warnings, "your Word document");
+    } catch (err) {
+      setImportError((err as Error).message);
+    } finally {
+      setIsParsingWord(false);
     }
   }
 
@@ -559,17 +642,14 @@ export default function QuestionBankEditor({
       if (err) nextErrors[r.clientId] = err;
     }
     setRowErrors(nextErrors);
-    setSubmitError(null);
     if (Object.keys(nextErrors).length > 0) return;
 
     startTransition(async () => {
       const res = await createQuestions(unsaved.map((r) => r.data), lot?.lotId ?? null);
       if (!res.ok) {
-        setSubmitError(res.error);
         notify(res.error, "error");
         return;
       }
-      setResult(res.created);
       const savedByClientId = new Map(unsaved.map((r, i) => [r.clientId, res.created[i]]));
       setRows((prev) =>
         prev.map((r) => (savedByClientId.has(r.clientId) ? { ...r, saved: savedByClientId.get(r.clientId)! } : r))
@@ -579,7 +659,6 @@ export default function QuestionBankEditor({
     });
   }
 
-  const hasBanner = result !== null || submitError !== null;
   const activeSettingsRow = settingsForClientId ? rows.find((r) => r.clientId === settingsForClientId) : undefined;
   const activeSettingsIndex = settingsForClientId ? rows.findIndex((r) => r.clientId === settingsForClientId) : -1;
 
@@ -587,31 +666,32 @@ export default function QuestionBankEditor({
     <div className="flex min-h-0 flex-1 flex-col">
       {/* Header + batch tools, one row */}
       <div className="shrink-0 border-b border-zinc-200 px-6 py-4">
-        <div className="">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-3">
             <BackLink href="/questions" label="Back" />
             <h1 className="mt-2 text-2xl font-semibold text-zinc-900 mb-2">Create Questions</h1>
           </div>
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex w-full shrink-0 flex-col gap-2 rounded-lg bg-zinc-950 px-3 py-2 shadow shadow-black sm:flex-row sm:flex-wrap sm:items-center lg:w-fit">
+            <span className="text-xs font-semibold uppercase tracking-wide text-white sm:mr-1">
+              Batch tools
+            </span>
+            <button className={buttonClass} onClick={() => setDefaultsOpen(true)}>
+              Batch Default Settings
+            </button>
+            <button className={buttonClass} onClick={() => setImportOpen(true)}>
+              Bulk Import
+            </button>
+            <button className={`${buttonClass} xl:hidden`} onClick={() => setExplorerOpen(true)}>
+              Today&apos;s Questions ({rows.length + savedElsewhereToday.length})
+            </button>
+          </div>
+          {/* <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <p className="max-w-2xl text-sm text-zinc-500">
               Add several questions in one batch, or paste JSON to import many at once. Each question is
               saved with its first version, tags and search index in a single step.
             </p>
-            <div className="flex w-full shrink-0 flex-col gap-2 rounded-lg bg-zinc-950 px-3 py-2 shadow shadow-black sm:flex-row sm:flex-wrap sm:items-center lg:w-auto">
-              <span className="text-xs font-semibold uppercase tracking-wide text-white sm:mr-1">
-                Batch tools
-              </span>
-              <button className={buttonClass} onClick={() => setDefaultsOpen(true)}>
-                Batch Default Settings
-              </button>
-              <button className={buttonClass} onClick={() => setImportOpen(true)}>
-                Bulk Import
-              </button>
-              <button className={`${buttonClass} xl:hidden`} onClick={() => setExplorerOpen(true)}>
-                Today&apos;s Questions ({rows.length + savedElsewhereToday.length})
-              </button>
-            </div>
-          </div>
+            
+          </div> */}
         </div>
         {referenceData.dimensions.length === 0 && (
           <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
@@ -621,36 +701,6 @@ export default function QuestionBankEditor({
           </div>
         )}
       </div>
-
-      {hasBanner && (
-        <div className="flex shrink-0 flex-col gap-2 px-6 pt-4">
-          {result && (
-            <div className="rounded-lg border border-emerald-300 bg-emerald-50 p-4 text-sm text-emerald-900">
-              <div className="flex items-center justify-between">
-                <p className="font-semibold">Saved {result.length} question(s).</p>
-                <button className="text-xs underline" onClick={() => setResult(null)}>
-                  Dismiss
-                </button>
-              </div>
-              <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
-                {result.map((r) => (
-                  <li key={r.questionId}>
-                    <Link className="underline" href={`/questions/${r.questionId}`}>
-                      {r.code}
-                    </Link>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          {submitError && (
-            <div className="rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-800">
-              {submitError}
-            </div>
-          )}
-        </div>
-      )}
 
       {/* Scrollable rows + fixed today's-questions panel on the right */}
       <div className="flex min-h-0 flex-1">
@@ -884,53 +934,44 @@ export default function QuestionBankEditor({
         open={importOpen}
         onClose={() => setImportOpen(false)}
         title="Bulk Import"
+        subTitle='Max 100 Questions at a time'
         widthClass="max-w-xl"
       >
         <div className="flex flex-col gap-5">
-          <div className="flex flex-col gap-3">
-            <h3 className={subSectionLabelClass}>From Excel (.xlsx)</h3>
+          <div className={`flex flex-col gap-3 rounded-lg border ${IMPORT_SECTION_COLOR.emerald.bar} bg-white p-3`}>
+            <ImportSectionHeader
+              icon={FiTable}
+              color="emerald"
+              title="From a Spreadsheet"
+              description="Best for a large batch of plain-text questions — fill in a spreadsheet, then upload it."
+            />
+            <ul className="flex flex-col gap-1.5 pl-1">
+              <ImportStep label="Column 1">Question — type the full question here.</ImportStep>
+              <ImportStep label="Column 2+">
+                One column per answer choice, named <em>Option A</em>, <em>Option B</em>… (or{" "}
+                <em>Option 1</em>, <em>Option 2</em>…) — use 2 to 10 columns.
+              </ImportStep>
+              <ImportStep label="Correct">
+                The letter or number of the right answer (like <em>B</em>). If more than one
+                answer is correct, separate them with commas (like <em>B, D</em>).
+              </ImportStep>
+              <ImportStep label="Explanation">Optional — shown to students after they answer.</ImportStep>
+              <ImportStep label="Tag Key / Tag Value">
+                Optional — label a question by subject, chapter or topic so it&apos;s easy to find
+                later. For more than one label, separate each with a comma in both columns.
+              </ImportStep>
+              <ImportStep label="Difficulty / Status">Optional — leave blank to use the defaults.</ImportStep>
+            </ul>
             <p className="text-xs text-zinc-500">
-              Columns must appear in exactly this order — download the sample file below to get
-              the layout right:
-            </p>
-            <ol className="list-decimal space-y-0.5 pl-5 text-xs text-zinc-500">
-              <li>
-                <code>Question</code> — the question text.
-              </li>
-              <li>
-                2 to 10 <code>Option A</code>, <code>Option B</code>… columns (or{" "}
-                <code>Option 1</code>, <code>Option 2</code>…) — one per answer choice.
-              </li>
-              <li>
-                <code>Correct</code> — the option&apos;s letter/number, or a comma-separated list
-                for a multiple-correct question (e.g. <code>B</code> or <code>B,D</code>).
-              </li>
-              <li>
-                <code>Explanation</code> — optional.
-              </li>
-              <li>
-                <code>Tag Key</code> and <code>Tag Value</code> — optional, and work like the tags
-                typed in the editor below (matched to an existing tag if one exists, otherwise
-                created automatically when you save). A question can carry several: put a
-                comma-separated list in each cell, paired up in order — e.g. Tag Key{" "}
-                <code>chapter,skill</code> with Tag Value <code>Percent Change,Conceptual</code>{" "}
-                creates two tags.
-              </li>
-              <li>
-                <code>Difficulty</code> (1–5) and <code>Status</code> — optional, default to 2 and
-                Approved.
-              </li>
-            </ol>
-            <p className="text-xs text-zinc-500">
-              Uploaded rows are always added after whatever&apos;s already below — nothing on the
-              page gets replaced.
+              Download the sample file to see this laid out. Your questions will be added to the
+              list below — anything you&apos;ve already started stays put.
             </p>
             <div className="flex flex-wrap gap-2">
               <button className={buttonClass} onClick={handleDownloadExcelTemplate}>
-                Download sample .xlsx
+                Download Sample Spreadsheet
               </button>
               <button className={primaryButtonClass} onClick={triggerExcelUpload}>
-                Upload .xlsx
+                Upload Spreadsheet
               </button>
             </div>
             <input
@@ -942,12 +983,64 @@ export default function QuestionBankEditor({
             />
           </div>
 
-          <div className="flex flex-col gap-3 border-t border-zinc-200 pt-4">
-            <h3 className={subSectionLabelClass}>From JSON</h3>
+          <div className={`flex flex-col gap-3 rounded-lg border ${IMPORT_SECTION_COLOR.blue.bar} bg-white p-3`}>
+            <ImportSectionHeader
+              icon={FiFileText}
+              color="blue"
+              title="From a Word Document"
+              description="The best way to include math — write your equations with Word's own Equation tool and they'll display correctly here automatically."
+            />
+            <ul className="flex flex-col gap-1.5 pl-1">
+              <ImportStep label="Question:">Start each question with this word, then type it right after.</ImportStep>
+              <ImportStep label="Option:">
+                Start each answer choice on its own line the same way — at least 2 per question.
+              </ImportStep>
+              <ImportStep label="Correct:">
+                Which answer choice is correct, by its position — for example{" "}
+                <em>Correct: 2</em> for the second option, or <em>Correct: 2, 3</em> if more than
+                one is correct.
+              </ImportStep>
+              <ImportStep label="Explanation:">Optional — shown to students after they answer.</ImportStep>
+            </ul>
             <p className="text-xs text-zinc-500">
-              Paste an array of question objects (e.g. generated by an AI assistant). Each tag is a{" "}
-              <code>{"{ key, value }"}</code> pair — any key or value not already in your tag bank is
-              created automatically when you save.
+              If a question or answer runs onto a second line in your document, that&apos;s fine —
+              it&apos;s still read as one piece of text. Download the sample file to see a working
+              example. Your questions will be added to the list below — anything you&apos;ve
+              already started stays put.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <a className={buttonClass} href="/samples/question-import-template.docx" download>
+                Download Sample Word File
+              </a>
+              <button className={primaryButtonClass} onClick={triggerWordUpload} disabled={isParsingWord}>
+                {isParsingWord ? "Reading your file…" : "Upload Word File"}
+              </button>
+            </div>
+            <input
+              ref={wordInputRef}
+              type="file"
+              accept=".docx"
+              hidden
+              onChange={handleWordFile}
+            />
+          </div>
+
+          <div className={`flex flex-col gap-3 rounded-lg border ${IMPORT_SECTION_COLOR.violet.bar} bg-white p-3`}>
+            <ImportSectionHeader
+              icon={FiCpu}
+              color="violet"
+              title="From an AI Assistant"
+              description="Used ChatGPT, Claude or another AI tool to write your questions? Have it follow the example format below, then paste its answer here."
+            />
+            <ul className="flex flex-col gap-1.5 pl-1">
+              <ImportStep label="1">
+                Click &ldquo;Show Example Format&rdquo; below and share it with your AI tool, asking
+                it to write your questions the same way.
+              </ImportStep>
+              <ImportStep label="2">Paste what it gives you into the box below.</ImportStep>
+            </ul>
+            <p className="text-xs text-zinc-500">
+              Any subject/chapter/topic labels you use are created automatically the first time.
             </p>
             <textarea
               className={`${inputClass} h-64 font-mono text-xs`}
@@ -957,13 +1050,10 @@ export default function QuestionBankEditor({
             />
             <div className="flex flex-wrap gap-2">
               <button className={buttonClass} onClick={() => setImportText(IMPORT_JSON_EXAMPLE)}>
-                Load example
+                Show Example Format
               </button>
-              <button className={primaryButtonClass} onClick={() => handleParseImport("append")}>
-                Parse &amp; append to rows
-              </button>
-              <button className={buttonClass} onClick={() => handleParseImport("replace")}>
-                Parse &amp; replace rows
+              <button className={primaryButtonClass} onClick={handleParseImport}>
+                Add These Questions
               </button>
             </div>
           </div>
@@ -979,6 +1069,54 @@ export default function QuestionBankEditor({
         </div>
       </Drawer>
     </div>
+  );
+}
+
+const IMPORT_SECTION_COLOR = {
+  emerald: { badge: "bg-emerald-100 text-emerald-700", bar: "border-emerald-200" },
+  blue: { badge: "bg-blue-100 text-blue-700", bar: "border-blue-200" },
+  violet: { badge: "bg-violet-100 text-violet-700", bar: "border-violet-200" },
+} as const;
+
+// Section header for one bulk-import method in the drawer below — an icon,
+// a plain-language title, and a one-line summary of who it's for/why.
+function ImportSectionHeader({
+  icon: Icon,
+  color,
+  title,
+  description,
+}: {
+  icon: ComponentType<{ size?: number }>;
+  color: keyof typeof IMPORT_SECTION_COLOR;
+  title: string;
+  description: string;
+}) {
+  return (
+    <div className="flex items-start gap-3">
+      <span
+        className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${IMPORT_SECTION_COLOR[color].badge}`}
+      >
+        <Icon size={16} />
+      </span>
+      <div>
+        <h3 className="text-sm font-semibold text-zinc-900">{title}</h3>
+        <p className="text-xs text-zinc-500">{description}</p>
+      </div>
+    </div>
+  );
+}
+
+// One step in a bulk-import method's instructions — a short labeled chip
+// (the exact word/heading to type, or a step number) plus a plain-language
+// explanation, in place of a dense wall of text.
+function ImportStep({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <li className="flex items-start gap-2 text-xs text-zinc-600">
+      <span className="mt-0.5 shrink-0 rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-zinc-700">
+        {label}
+      </span>
+      <span>{children}</span>
+    </li>
   );
 }
 
@@ -1219,6 +1357,7 @@ function QuestionRowCard({
                 placeholder="Enter the question stem…"
                 autoComplete="off"
               />
+              <MathTextPreview text={data.stem} />
             </div>
             <div className="min-w-0 sm:w-60 sm:shrink-0">
               <label className={labelClass}>Media (optional)</label>
@@ -1282,6 +1421,10 @@ function QuestionRowCard({
                       >
                         ✕
                       </button>
+                      <MathTextPreview
+                        text={opt.text}
+                        boxClassName="col-span-5 rounded-md border border-zinc-200 bg-zinc-50 px-2 py-1 text-sm text-zinc-800"
+                      />
                     </div>
                   );
                 })}
@@ -1318,6 +1461,7 @@ function QuestionRowCard({
                 placeholder="Explain the correct answer…"
                 autoComplete="off"
               />
+              <MathTextPreview text={data.explanation} />
             </div>
             <div className="min-w-0 sm:w-60 sm:shrink-0">
               {/* <label className={labelClass}>Explanation media (optional)</label> */}

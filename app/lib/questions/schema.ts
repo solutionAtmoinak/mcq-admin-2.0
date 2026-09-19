@@ -617,6 +617,169 @@ export function parseImportExcelRows(
   return { rows: parsedRows, warnings };
 }
 
+// ---- Word bulk-import ----
+// Mirrors parseImportExcelRows's shape/behavior but reads the flattened
+// paragraph lines produced by app/lib/questions/wordDocx.ts's
+// extractWordImportLines() (that file does the .docx/OMML-specific
+// extraction; this function only knows about plain text lines, same
+// division of labor as XLSX.read() vs. this file for the Excel path).
+//
+// Expected format is one field per paragraph, each starting with a label:
+//   Question: <text, with inline \( latex \) for any equations>
+//   Option: <text>           (repeat 2+ times)
+//   Correct: <1-based option number(s) or letter ids, comma-separated>
+//   Explanation: <text>      (optional)
+// A paragraph with no label is treated as a continuation of whichever field
+// came last (so a stem/option/explanation that wraps onto its own paragraph
+// in Word still gets picked up). Word import only supports option-based
+// questions (mcq_single/msq), same limitation as the Excel path.
+const WORD_LINE_RE = /^\s*(Question|Option|Correct|Explanation)\s*:\s*([\s\S]*)$/i;
+
+type WordDraft = {
+  stem: string;
+  options: string[];
+  correctRaw: string;
+  explanation: string;
+  startLine: number;
+};
+
+export function parseImportWordLines(
+  lines: string[],
+  statusOptions: ServiceOption[],
+): ImportResult {
+  const warnings: string[] = [];
+  const defaultStatus =
+    valueByLabel(statusOptions, "APPROVED") ?? statusOptions[0]?.value ?? 0;
+
+  const drafts: WordDraft[] = [];
+  let current: WordDraft | null = null;
+  let lastField: "stem" | "option" | "correct" | "explanation" | null = null;
+
+  function pushCurrent() {
+    if (current) drafts.push(current);
+    current = null;
+  }
+
+  lines.forEach((rawLine, i) => {
+    const match = rawLine.match(WORD_LINE_RE);
+    if (!match) {
+      // Continuation of whatever field was last written — lets a stem,
+      // option or explanation that spans multiple Word paragraphs still be
+      // captured, instead of only ever reading the first paragraph of it.
+      if (!current || !lastField) return; // stray text before any "Question:" — ignore
+      if (lastField === "stem") current.stem += ` ${rawLine}`;
+      else if (lastField === "option" && current.options.length) {
+        current.options[current.options.length - 1] += ` ${rawLine}`;
+      } else if (lastField === "correct") current.correctRaw += `, ${rawLine}`;
+      else if (lastField === "explanation") current.explanation += ` ${rawLine}`;
+      return;
+    }
+
+    const label = match[1].toLowerCase();
+    const value = match[2].trim();
+    if (label === "question") {
+      pushCurrent();
+      current = {
+        stem: value,
+        options: [],
+        correctRaw: "",
+        explanation: "",
+        startLine: i + 1,
+      };
+      lastField = "stem";
+      return;
+    }
+    if (!current) {
+      warnings.push(`Line ${i + 1}: "${match[1]}:" found before any "Question:" line — ignored.`);
+      return;
+    }
+    if (label === "option") {
+      current.options.push(value);
+      lastField = "option";
+    } else if (label === "correct") {
+      current.correctRaw = current.correctRaw ? `${current.correctRaw}, ${value}` : value;
+      lastField = "correct";
+    } else if (label === "explanation") {
+      current.explanation = current.explanation ? `${current.explanation} ${value}` : value;
+      lastField = "explanation";
+    }
+  });
+  pushCurrent();
+
+  const rows: QuestionInput[] = [];
+  drafts.forEach((d, idx) => {
+    const rowNo = idx + 1;
+    const near = `near line ${d.startLine}`;
+    const stem = d.stem.trim();
+    if (!stem) {
+      warnings.push(`Question ${rowNo} (${near}): skipped — empty question text.`);
+      return;
+    }
+
+    let optionTexts = d.options.map((o) => o.trim()).filter(Boolean);
+    if (optionTexts.length > MAX_OPTIONS) {
+      warnings.push(
+        `Question ${rowNo} (${near}): found ${optionTexts.length} options — only the first ${MAX_OPTIONS} were kept.`,
+      );
+      optionTexts = optionTexts.slice(0, MAX_OPTIONS);
+    }
+    if (optionTexts.length < MIN_OPTIONS) {
+      warnings.push(`Question ${rowNo} (${near}): skipped — needs at least ${MIN_OPTIONS} options.`);
+      return;
+    }
+    const options: OptionInput[] = optionTexts.map((text, i) => ({
+      id: OPTION_LETTERS[i] || String(i + 1),
+      text,
+    }));
+
+    const correctRaw = d.correctRaw.trim();
+    if (!correctRaw) {
+      warnings.push(`Question ${rowNo} (${near}): skipped — no "Correct:" line.`);
+      return;
+    }
+    const correctOptionIds: string[] = [];
+    const badTokens: string[] = [];
+    for (const tok of correctRaw.split(",").map((s) => s.trim()).filter(Boolean)) {
+      const asPosition = Number(tok);
+      if (Number.isInteger(asPosition) && asPosition >= 1 && asPosition <= options.length) {
+        correctOptionIds.push(options[asPosition - 1].id);
+        continue;
+      }
+      const byId = options.find((o) => o.id.toLowerCase() === tok.toLowerCase());
+      if (byId) correctOptionIds.push(byId.id);
+      else badTokens.push(tok);
+    }
+    if (badTokens.length) {
+      warnings.push(
+        `Question ${rowNo} (${near}): "Correct:" references unknown option(s): ${badTokens.join(", ")}.`,
+      );
+    }
+    if (correctOptionIds.length === 0) {
+      warnings.push(`Question ${rowNo} (${near}): skipped — no valid correct option found.`);
+      return;
+    }
+
+    rows.push(
+      emptyQuestion({
+        typeCode: correctOptionIds.length > 1 ? "msq" : "mcq_single",
+        status: defaultStatus,
+        stem,
+        options,
+        correctOptionIds,
+        explanation: d.explanation.trim(),
+      }),
+    );
+  });
+
+  if (rows.length === 0 && warnings.length === 0) {
+    warnings.push(
+      'No questions found — make sure paragraphs start with "Question:", "Option:", "Correct:", etc.',
+    );
+  }
+
+  return { rows, warnings };
+}
+
 export const IMPORT_JSON_EXAMPLE = `[
   {
     "type": "mcq_single",

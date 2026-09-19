@@ -1,4 +1,4 @@
-import { prisma } from "./prisma";
+import { callTeacherService } from "./teacherService";
 import { valueByLabel, type ServiceOption } from "./serviceOptions";
 
 export type ServiceCategory =
@@ -8,13 +8,23 @@ export type ServiceCategory =
 
 // _InternalService only changes when an admin edits it directly in the DB —
 // refetching on every request would be wasteful, so each category is cached
-// for a short window, same pattern as auth.ts's LMS-validation cache.
+// for a short window, same pattern as auth.ts's old LMS-validation cache
+// (since removed — see auth.ts).
 const CACHE_TTL_MS = 60_000;
 const cache = new Map<
   ServiceCategory,
   { options: ServiceOption[]; fetchedAt: number }
 >();
 
+type RawServiceOption = {
+  Value: string | null;
+  Label: string;
+  DisplayLabel: string | null;
+  Category: string;
+  Description: string | null;
+};
+
+// Mode 4 of dbo.spMcqTeacherService — see mcq-admin/sql/spMcqTeacherService.sql.
 export async function getServiceOptions(
   category: ServiceCategory,
 ): Promise<ServiceOption[]> {
@@ -22,24 +32,30 @@ export async function getServiceOptions(
   if (cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS)
     return cached.options;
 
-  const rows = await prisma.internalService.findMany({
-    where: { Category: category, IsActive: true },
-    orderBy: [{ SortedOrder: "asc" }, { ServiceId: "asc" }],
+  const result = await callTeacherService<RawServiceOption[] | string>(4, {
+    Category: category,
   });
+  
+  if (typeof result === "string") {
+    throw new Error(result);
+  }
+  const rows = result ?? [];
+
   // ServiceValue is stored as text (nvarchar) — every category today holds
   // numeric codes, so coerce those to real numbers (Question.Status,
-  // MockTest.Status, etc. are Prisma Int columns; comparing a number to the
-  // raw string would silently always fail). A future category storing a
-  // genuinely non-numeric code is left as a string as-is.
+  // MockTest.Status, etc. are compared against these as real numbers
+  // elsewhere; comparing a number to the raw string would silently always
+  // fail). A future category storing a genuinely non-numeric code is left
+  // as a string as-is.
   const options: ServiceOption[] = rows
-    .filter((r) => r.ServiceValue !== null && r.ServiceValue !== "")
+    .filter((r) => r.Value !== null && r.Value !== "")
     .map((r) => {
-      const raw = r.ServiceValue as string;
+      const raw = r.Value as string;
       const numeric = Number(raw);
       return {
         value: Number.isFinite(numeric) ? numeric : raw,
-        label: r.ServiceLabel.trim().toUpperCase(),
-        displayLabel: r.ServiceDisplayLabel?.trim() ?? r.ServiceLabel.trim(),
+        label: r.Label.trim().toUpperCase(),
+        displayLabel: r.DisplayLabel?.trim() ?? r.Label.trim(),
         category: r.Category,
         description: r.Description ?? undefined,
       };

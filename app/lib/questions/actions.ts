@@ -1,24 +1,16 @@
 "use server";
 
-import { Prisma } from "@/app/generated/prisma/client";
-import { requireUser, type CurrentUser } from "@/app/lib/auth/auth";
+import { callTeacherService } from "@/app/lib/db/teacherService";
 import { getQuestionForEdit } from "./data";
-import { prisma } from "@/app/lib/db/prisma";
 import {
   buildContent,
   buildSearchText,
   validateQuestion,
   type QuestionInput,
-  type TagPair,
 } from "./schema";
 import { revalidatePath } from "next/cache";
-import crypto from "node:crypto";
 import { getServiceOptions } from "@/app/lib/db/serviceConfig";
 import { toValueRecord } from "@/app/lib/db/serviceOptions";
-
-// The tx param inside prisma.$transaction(async (tx) => ...) — extracted so
-// the tag-resolution helper below can be shared by create and update.
-type Tx = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
 
 export type CreateQuestionsResult =
   | { ok: true; created: { code: string; questionId: string }[] }
@@ -34,198 +26,31 @@ export type ChangeStatusResult = { ok: true } | { ok: false; error: string };
 
 export type DeleteQuestionResult = { ok: true } | { ok: false; error: string };
 
-function generateCode(typeCode: string): string {
-  const prefix = typeCode.slice(0, 3).toUpperCase();
-  const rand = crypto.randomBytes(4).toString("hex").toUpperCase();
-  return `Q-${prefix}-${rand}`;
-}
-
-function generateLotNo(): string {
-  const now = new Date();
-  const y = now.getFullYear();
-  const m = String(now.getMonth() + 1).padStart(2, "0");
-  const d = String(now.getDate()).padStart(2, "0");
-  const rand = crypto.randomBytes(4).toString("hex").toUpperCase();
-  return `LOT-${y}${m}${d}-${rand}`;
-}
-
 export async function getQuestionStatus() {
   const s = await getServiceOptions("QUESTION_STATUS");
   return toValueRecord(s);
 }
 
+function errorFrom(result: unknown, fallback: string): string {
+  return typeof result === "string" ? result : fallback;
+}
+
+// Mode 12 of dbo.spMcqTeacherService — see mcq-admin/sql/spMcqTeacherService.sql.
 // Mints a new lot the moment the Create Questions page loads (see
-// QuestionBankEditor's initial state). Every question saved afterwards during
-// that same browser-tab session — one row at a time or via "Save All" — is
-// tagged with this lot's id, so the whole batch can be found/reused as a
-// group later (surfaced read-only in Batch Default Settings).
+// QuestionBankEditor's initial state); the SP itself generates LotNo and
+// retries on a rare unique-constraint collision, so this is a single call.
 export async function createQuestionLot(): Promise<CreateQuestionLotResult> {
-  const currentUser = await requireUser();
-
-  const ATTEMPTS = 5;
-  for (let i = 0; i < ATTEMPTS; i++) {
-    const lotNo = generateLotNo();
-    try {
-      const lot = await prisma.questionLot.create({
-        data: {
-          LotNo: lotNo,
-          CreatedBy: currentUser.id,
-          FranchiseId: currentUser.franchiseId,
-        },
-      });
-      return { ok: true, lotId: lot.LotId.toString(), lotNo: lot.LotNo };
-    } catch {
-      // Collision on the unique LotNo constraint — retry with a fresh
-      // random suffix. Astronomically unlikely (32 bits of randomness per
-      // day), so a handful of attempts is more than enough headroom.
-    }
+  const result = await callTeacherService<{ LotId: string; LotNo: string } | string>(12, {});
+  if (typeof result === "string" || !result) {
+    return { ok: false, error: errorFrom(result, "Could not generate a unique lot number. Please try again.") };
   }
-  return {
-    ok: false,
-    error: "Could not generate a unique lot number. Please try again.",
-  };
-}
-
-// Tag dimension `Code` is a unique, DB-friendly slug derived from whatever
-// key the user typed (e.g. "Subject" -> "subject", "Question Source" ->
-// "question_source").
-function slugifyCode(input: string): string {
-  const base = input
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "");
-  return (base || "tag").slice(0, 50);
-}
-
-// Resolves (and auto-creates) tag dimensions ("keys") and tags ("values")
-// for every {key, value} pair across `tagLists` (one list per question).
-// Returns a map from "keyLower|valueLower" -> TagId. Shared by create and
-// update so a brand-new key/value used across a batch is only created once.
-async function resolveTagIds(
-  tx: Tx,
-  tagLists: TagPair[][],
-  currentUser: CurrentUser,
-): Promise<Map<string, bigint>> {
-  const uniqueKeyLowers = new Set<string>();
-  const keyDisplayByLower = new Map<string, string>();
-  const uniquePairs = new Map<string, { keyLower: string; value: string }>();
-
-  for (const tags of tagLists) {
-    for (const t of tags) {
-      const key = t.key.trim();
-      const value = t.value.trim();
-      if (!key || !value) continue;
-      const keyLower = key.toLowerCase();
-      uniqueKeyLowers.add(keyLower);
-      if (!keyDisplayByLower.has(keyLower))
-        keyDisplayByLower.set(keyLower, key);
-      uniquePairs.set(`${keyLower}|${value.toLowerCase()}`, {
-        keyLower,
-        value,
-      });
-    }
-  }
-
-  // Dimensions have no rowversion column, so the normal query builder works fine here.
-  const existingDimensions = await tx.tagDimension.findMany({
-    where: { IsDeleted: false, FranchiseId: currentUser.franchiseId },
-  });
-  const dimensionByLower = new Map<string, { DimensionId: number }>();
-  const existingCodesLower = new Set<string>();
-  for (const d of existingDimensions) {
-    dimensionByLower.set(d.Name.toLowerCase(), d);
-    dimensionByLower.set(d.Code.toLowerCase(), d);
-    existingCodesLower.add(d.Code.toLowerCase());
-  }
-
-  const dimensionIdByKeyLower = new Map<string, number>();
-  for (const keyLower of uniqueKeyLowers) {
-    const existing = dimensionByLower.get(keyLower);
-    if (existing) {
-      dimensionIdByKeyLower.set(keyLower, existing.DimensionId);
-      continue;
-    }
-    const displayName = keyDisplayByLower.get(keyLower)!;
-    let code = slugifyCode(displayName);
-    let suffix = 2;
-    while (existingCodesLower.has(code)) {
-      code = `${slugifyCode(displayName)}_${suffix}`;
-      suffix += 1;
-    }
-    existingCodesLower.add(code);
-    const createdDimension = await tx.tagDimension.create({
-      data: {
-        Code: code,
-        Name: displayName,
-        CreatedBy: currentUser.id,
-        FranchiseId: currentUser.franchiseId,
-      },
-    });
-    dimensionIdByKeyLower.set(keyLower, createdDimension.DimensionId);
-  }
-
-  const relevantDimensionIds = [...new Set(dimensionIdByKeyLower.values())];
-  const existingTags = relevantDimensionIds.length
-    ? await tx.tag.findMany({
-        where: { DimensionId: { in: relevantDimensionIds }, IsDeleted: false, FranchiseId: currentUser.franchiseId },
-      })
-    : [];
-  const tagIdByDimAndNameLower = new Map<string, bigint>();
-  for (const t of existingTags) {
-    tagIdByDimAndNameLower.set(
-      `${t.DimensionId}|${t.Name.toLowerCase()}`,
-      t.TagId,
-    );
-  }
-
-  const tagIdByPairKey = new Map<string, bigint>();
-  for (const [pairKey, info] of uniquePairs) {
-    const dimensionId = dimensionIdByKeyLower.get(info.keyLower)!;
-    const lookupKey = `${dimensionId}|${info.value.toLowerCase()}`;
-    let tagId = tagIdByDimAndNameLower.get(lookupKey);
-    if (tagId === undefined) {
-      // NOTE: Tag (like Question) has a SQL Server `rowversion`/`timestamp`
-      // column (RowVer), which the structured Prisma Client query builder
-      // for this generator/adapter combo cannot build create plans for
-      // ("does not match any query"). Reads work fine; writes go raw.
-      const insertedTag = await tx.$queryRaw<{ TagId: bigint }[]>(
-        Prisma.sql`INSERT INTO dbo.Tag (DimensionId, Name, CreatedBy, FranchiseId)
-          OUTPUT INSERTED.TagId
-          VALUES (${dimensionId}, ${info.value}, ${currentUser.id}, ${currentUser.franchiseId})`,
-      );
-      tagId = insertedTag[0].TagId;
-      tagIdByDimAndNameLower.set(lookupKey, tagId);
-    }
-    tagIdByPairKey.set(pairKey, tagId);
-  }
-
-  return tagIdByPairKey;
-}
-
-function resolveQuestionTagIds(
-  tags: TagPair[],
-  tagIdByPairKey: Map<string, bigint>,
-): Set<bigint> {
-  const tagIds = new Set<bigint>();
-  for (const t of tags) {
-    const key = t.key.trim();
-    const value = t.value.trim();
-    if (!key || !value) continue;
-    const tagId = tagIdByPairKey.get(
-      `${key.toLowerCase()}|${value.toLowerCase()}`,
-    );
-    if (tagId !== undefined) tagIds.add(tagId);
-  }
-  return tagIds;
+  return { ok: true, lotId: result.LotId, lotNo: result.LotNo };
 }
 
 export async function createQuestions(
   inputs: QuestionInput[],
   lotId?: string | null,
 ): Promise<CreateQuestionsResult> {
-  const currentUser = await requireUser();
-
   if (!inputs || inputs.length === 0) {
     return { ok: false, error: "No questions to create." };
   }
@@ -236,15 +61,6 @@ export async function createQuestions(
     };
   }
 
-  let lotIdBigInt: bigint | null = null;
-  if (lotId) {
-    try {
-      lotIdBigInt = BigInt(lotId);
-    } catch {
-      return { ok: false, error: "Invalid lot id." };
-    }
-  }
-
   const QUESTION_STATUS = await getQuestionStatus();
   const validStatusValues = Object.values(QUESTION_STATUS);
 
@@ -253,252 +69,85 @@ export async function createQuestions(
     if (err) return { ok: false, error: `Question ${i + 1}: ${err}` };
   }
 
-  const questionTypes = await prisma.questionType.findMany({
-    where: { IsDeleted: false },
-  });
-  const typeByCode = new Map(questionTypes.map((t) => [t.Code, t]));
-  for (const [i, q] of inputs.entries()) {
-    if (!typeByCode.has(q.typeCode)) {
-      return {
-        ok: false,
-        error: `Question ${i + 1}: unknown question type "${q.typeCode}".`,
-      };
-    }
+  const explicitCodes = inputs.map((q) => q.code?.trim()).filter((c): c is string => !!c);
+  const dupeInBatch = explicitCodes.filter((c, i) => explicitCodes.indexOf(c) !== i);
+  if (dupeInBatch.length) {
+    return {
+      ok: false,
+      error: `Duplicate code(s) in this batch: ${[...new Set(dupeInBatch)].join(", ")}`,
+    };
   }
 
-  const explicitCodes = inputs
-    .map((q) => q.code?.trim())
-    .filter((c): c is string => !!c);
-  if (explicitCodes.length) {
-    const dupeInBatch = explicitCodes.filter(
-      (c, i) => explicitCodes.indexOf(c) !== i,
-    );
-    if (dupeInBatch.length) {
-      return {
-        ok: false,
-        error: `Duplicate code(s) in this batch: ${[...new Set(dupeInBatch)].join(", ")}`,
-      };
-    }
-    const existing = await prisma.question.findMany({
-      where: { Code: { in: explicitCodes } },
-      select: { Code: true },
-    });
-    if (existing.length) {
-      return {
-        ok: false,
-        error: `Code already exists: ${existing.map((e) => e.Code).join(", ")}`,
-      };
-    }
-  }
-
-  const created: { code: string; questionId: string }[] = [];
-
-  await prisma.$transaction(async (tx) => {
-    const tagIdByPairKey = await resolveTagIds(
-      tx,
-      inputs.map((q) => q.tags),
-      currentUser,
-    );
-
-    for (const q of inputs) {
-      const type = typeByCode.get(q.typeCode)!;
-      const code = q.code?.trim() || generateCode(q.typeCode);
-
-      // NOTE: Question also has a rowversion column — see comment above.
-      const isApproved = q.status === QUESTION_STATUS.APPROVED;
-      const insertedRows = isApproved
-        ? await tx.$queryRaw<{ QuestionId: bigint }[]>(
-            Prisma.sql`INSERT INTO dbo.Question (Code, QuestionTypeId, Difficulty, Status, EstSolveSec, LotId, ApprovedBy, ApprovedOn, CreatedBy, FranchiseId)
-              OUTPUT INSERTED.QuestionId
-              VALUES (${code}, ${type.QuestionTypeId}, ${q.difficulty}, ${q.status}, ${q.estSolveSec ?? null}, ${lotIdBigInt}, ${currentUser.id}, GETDATE(), ${currentUser.id}, ${currentUser.franchiseId})`,
-          )
-        : await tx.$queryRaw<{ QuestionId: bigint }[]>(
-            Prisma.sql`INSERT INTO dbo.Question (Code, QuestionTypeId, Difficulty, Status, EstSolveSec, LotId, CreatedBy, FranchiseId)
-              OUTPUT INSERTED.QuestionId
-              VALUES (${code}, ${type.QuestionTypeId}, ${q.difficulty}, ${q.status}, ${q.estSolveSec ?? null}, ${lotIdBigInt}, ${currentUser.id}, ${currentUser.franchiseId})`,
-          );
-      const questionId = insertedRows[0].QuestionId;
-
-      const { presentation, answer } = buildContent(q);
-      const presentationJson = JSON.stringify(presentation);
-      const answerJson = JSON.stringify(answer);
-      const contentHash = crypto
-        .createHash("sha256")
-        .update(`${presentationJson}|${answerJson}`)
-        .digest("hex");
-
-      const version = await tx.questionVersion.create({
-        data: {
-          QuestionId: questionId,
-          VersionNo: 1,
-          Locale: "en",
-          PresentationJson: presentationJson,
-          AnswerJson: answerJson,
-          MetaJson: JSON.stringify({ source: "question-bank-ui" }),
-          ContentHash: contentHash,
-          ChangeNote: "Initial version",
-          CreatedBy: currentUser.id,
-          FranchiseId: currentUser.franchiseId,
-        },
-      });
-
-      await tx.$executeRaw(
-        Prisma.sql`UPDATE dbo.Question
-          SET CurrentVersionId = ${version.VersionId}, ModifiedBy = ${currentUser.id}, ModifiedOn = GETDATE()
-          WHERE QuestionId = ${questionId}`,
-      );
-
-      const tagIds = resolveQuestionTagIds(q.tags, tagIdByPairKey);
-      for (const tagId of tagIds) {
-        await tx.questionTag.create({
-          data: {
-            TagId: tagId,
-            QuestionId: questionId,
-            CreatedBy: currentUser.id,
-            FranchiseId: currentUser.franchiseId,
-          },
-        });
-      }
-
-      await tx.questionSearch.create({
-        data: {
-          QuestionId: questionId,
-          Locale: "en",
-          SearchText: buildSearchText(q),
-          CreatedBy: currentUser.id,
-          FranchiseId: currentUser.franchiseId,
-        },
-      });
-
-      await tx.questionStat.create({
-        data: {
-          QuestionId: questionId,
-          CreatedBy: currentUser.id,
-          FranchiseId: currentUser.franchiseId,
-        },
-      });
-
-      created.push({ code, questionId: questionId.toString() });
-    }
+  // Content validation and building of Presentation/AnswerJson/SearchText
+  // stay in TS (schema.ts, pure functions) — the SP only does DB-level
+  // checks and the writes. See Mode 13's header comment for the full shape.
+  const questions = inputs.map((q) => {
+    const { presentation, answer } = buildContent(q);
+    return {
+      Code: q.code?.trim() || "",
+      TypeCode: q.typeCode,
+      Difficulty: q.difficulty,
+      Status: q.status,
+      EstSolveSec: q.estSolveSec ?? null,
+      PresentationJson: JSON.stringify(presentation),
+      AnswerJson: JSON.stringify(answer),
+      SearchText: buildSearchText(q),
+      Tags: q.tags
+        .map((t) => ({ Key: t.key.trim(), Value: t.value.trim() }))
+        .filter((t) => t.Key && t.Value),
+    };
   });
+
+  const result = await callTeacherService<{ Created: { Code: string; QuestionId: string }[] } | string>(13, {
+    LotId: lotId ?? null,
+    Questions: questions,
+  });
+
+  if (typeof result === "string" || !result) {
+    return { ok: false, error: errorFrom(result, "Failed to create the question(s).") };
+  }
 
   revalidatePath("/questions");
   revalidatePath("/");
 
-  return { ok: true, created };
+  return {
+    ok: true,
+    created: (result.Created ?? []).map((c) => ({ code: c.Code, questionId: c.QuestionId })),
+  };
 }
 
-// Edits are versioned: every save creates a new QuestionVersion (matching
-// the schema's ContentHash/ChangeNote design) and repoints
-// Question.CurrentVersionId at it. QuestionTypeId/Difficulty/EstSolveSec
-// live on Question itself and are updated directly. Status is intentionally
-// left alone here — use changeQuestionStatus for that, so review/approval
-// stays a distinct, audited action (see ReviewAction).
+// Edits are versioned: every save creates a new QuestionVersion (Mode 14)
+// and repoints Question.CurrentVersionId. Status is intentionally left
+// alone here — use changeQuestionStatus for that, so review/approval stays
+// a distinct, audited action.
 export async function updateQuestion(
   questionId: string,
   input: QuestionInput,
   changeNote?: string,
 ): Promise<UpdateQuestionResult> {
-  const currentUser = await requireUser();
-
-  let id: bigint;
-  try {
-    id = BigInt(questionId);
-  } catch {
-    return { ok: false, error: "Invalid question id." };
-  }
-
   const questionStatusOptions = await getServiceOptions("QUESTION_STATUS");
-  const err = validateQuestion(
-    input,
-    questionStatusOptions.map((o) => o.value),
-  );
+  const err = validateQuestion(input, questionStatusOptions.map((o) => o.value));
   if (err) return { ok: false, error: err };
 
-  const existing = await prisma.question.findFirst({
-    where: { QuestionId: id, IsDeleted: false, FranchiseId: currentUser.franchiseId },
+  const { presentation, answer } = buildContent(input);
+
+  const result = await callTeacherService<string>(14, {
+    QuestionId: questionId,
+    TypeCode: input.typeCode,
+    Difficulty: input.difficulty,
+    EstSolveSec: input.estSolveSec ?? null,
+    PresentationJson: JSON.stringify(presentation),
+    AnswerJson: JSON.stringify(answer),
+    SearchText: buildSearchText(input),
+    ChangeNote: changeNote?.trim() || null,
+    Tags: input.tags
+      .map((t) => ({ Key: t.key.trim(), Value: t.value.trim() }))
+      .filter((t) => t.Key && t.Value),
   });
-  if (!existing) return { ok: false, error: "Question not found." };
 
-  const type = await prisma.questionType.findFirst({
-    where: { Code: input.typeCode, IsDeleted: false },
-  });
-  if (!type)
-    return { ok: false, error: `Unknown question type "${input.typeCode}".` };
-
-  const lastVersion = await prisma.questionVersion.findFirst({
-    where: { QuestionId: id },
-    orderBy: { VersionNo: "desc" },
-  });
-  const nextVersionNo = (lastVersion?.VersionNo ?? 0) + 1;
-
-  await prisma.$transaction(async (tx) => {
-    const tagIdByPairKey = await resolveTagIds(tx, [input.tags], currentUser);
-
-    const { presentation, answer } = buildContent(input);
-    const presentationJson = JSON.stringify(presentation);
-    const answerJson = JSON.stringify(answer);
-    const contentHash = crypto
-      .createHash("sha256")
-      .update(`${presentationJson}|${answerJson}`)
-      .digest("hex");
-
-    const version = await tx.questionVersion.create({
-      data: {
-        QuestionId: id,
-        VersionNo: nextVersionNo,
-        Locale: "en",
-        PresentationJson: presentationJson,
-        AnswerJson: answerJson,
-        MetaJson: JSON.stringify({ source: "question-bank-ui" }),
-        ContentHash: contentHash,
-        ChangeNote: changeNote?.trim() || "Edited via question bank UI",
-        CreatedBy: currentUser.id,
-        FranchiseId: currentUser.franchiseId,
-      },
-    });
-
-    // NOTE: Question has a rowversion column — see resolveTagIds comment above.
-    await tx.$executeRaw(
-      Prisma.sql`UPDATE dbo.Question
-        SET QuestionTypeId = ${type.QuestionTypeId},
-            Difficulty = ${input.difficulty},
-            EstSolveSec = ${input.estSolveSec ?? null},
-            CurrentVersionId = ${version.VersionId},
-            ModifiedBy = ${currentUser.id},
-            ModifiedOn = GETDATE()
-        WHERE QuestionId = ${id}`,
-    );
-
-    await tx.questionTag.deleteMany({ where: { QuestionId: id } });
-    const tagIds = resolveQuestionTagIds(input.tags, tagIdByPairKey);
-    for (const tagId of tagIds) {
-      await tx.questionTag.create({
-        data: {
-          TagId: tagId,
-          QuestionId: id,
-          CreatedBy: currentUser.id,
-          FranchiseId: currentUser.franchiseId,
-        },
-      });
-    }
-
-    await tx.questionSearch.upsert({
-      where: { QuestionId_Locale: { QuestionId: id, Locale: "en" } },
-      create: {
-        QuestionId: id,
-        Locale: "en",
-        SearchText: buildSearchText(input),
-        CreatedBy: currentUser.id,
-        FranchiseId: currentUser.franchiseId,
-      },
-      update: {
-        SearchText: buildSearchText(input),
-        ModifiedBy: currentUser.id,
-        ModifiedOn: new Date(),
-      },
-    });
-  });
+  if (typeof result === "string" && result !== "OK") {
+    return { ok: false, error: result };
+  }
 
   revalidatePath("/questions");
   revalidatePath(`/questions/${questionId}`);
@@ -514,61 +163,21 @@ export async function changeQuestionStatus(
   toStatus: number,
   comment?: string,
 ): Promise<ChangeStatusResult> {
-  const currentUser = await requireUser();
-
-  let id: bigint;
-  try {
-    id = BigInt(questionId);
-  } catch {
-    return { ok: false, error: "Invalid question id." };
-  }
-
   const QUESTION_STATUS = await getQuestionStatus();
-
   const validStatuses = Object.values(QUESTION_STATUS) as number[];
   if (!validStatuses.includes(toStatus)) {
     return { ok: false, error: "Invalid status." };
   }
 
-  const existing = await prisma.question.findFirst({
-    where: { QuestionId: id, IsDeleted: false, FranchiseId: currentUser.franchiseId },
+  const result = await callTeacherService<string>(15, {
+    QuestionId: questionId,
+    ToStatus: toStatus,
+    Comment: comment?.trim() || null,
   });
-  if (!existing) return { ok: false, error: "Question not found." };
-  if (existing.Status === toStatus) {
-    return { ok: false, error: "Question is already in that status." };
+
+  if (typeof result === "string" && result !== "OK") {
+    return { ok: false, error: result };
   }
-
-  await prisma.$transaction(async (tx) => {
-    // NOTE: Question has a rowversion column — see resolveTagIds comment above.
-    if (toStatus === QUESTION_STATUS.APPROVED) {
-      await tx.$executeRaw(
-        Prisma.sql`UPDATE dbo.Question
-          SET Status = ${toStatus}, ApprovedBy = ${currentUser.id}, ApprovedOn = GETDATE(),
-              ModifiedBy = ${currentUser.id}, ModifiedOn = GETDATE()
-          WHERE QuestionId = ${id}`,
-      );
-    } else {
-      await tx.$executeRaw(
-        Prisma.sql`UPDATE dbo.Question
-          SET Status = ${toStatus}, ModifiedBy = ${currentUser.id}, ModifiedOn = GETDATE()
-          WHERE QuestionId = ${id}`,
-      );
-    }
-
-    if (existing.CurrentVersionId) {
-      await tx.reviewAction.create({
-        data: {
-          QuestionId: id,
-          VersionId: existing.CurrentVersionId,
-          FromStatus: existing.Status,
-          ToStatus: toStatus,
-          Comment: comment?.trim() || null,
-          CreatedBy: currentUser.id,
-          FranchiseId: currentUser.franchiseId,
-        },
-      });
-    }
-  });
 
   revalidatePath("/questions");
   revalidatePath(`/questions/${questionId}`);
@@ -580,29 +189,12 @@ export async function changeQuestionStatus(
 // Soft delete only: flips IsDeleted so the question drops out of every
 // IsDeleted:false query (list, edit, reference lookups) without losing the
 // row's history (versions, tags, review actions).
-export async function deleteQuestion(
-  questionId: string,
-): Promise<DeleteQuestionResult> {
-  const currentUser = await requireUser();
+export async function deleteQuestion(questionId: string): Promise<DeleteQuestionResult> {
+  const result = await callTeacherService<string>(16, { QuestionId: questionId });
 
-  let id: bigint;
-  try {
-    id = BigInt(questionId);
-  } catch {
-    return { ok: false, error: "Invalid question id." };
+  if (typeof result === "string" && result !== "OK") {
+    return { ok: false, error: result };
   }
-
-  const existing = await prisma.question.findFirst({
-    where: { QuestionId: id, IsDeleted: false, FranchiseId: currentUser.franchiseId },
-  });
-  if (!existing) return { ok: false, error: "Question not found." };
-
-  // NOTE: Question has a rowversion column — see resolveTagIds comment above.
-  await prisma.$executeRaw(
-    Prisma.sql`UPDATE dbo.Question
-      SET IsDeleted = 1, ModifiedBy = ${currentUser.id}, ModifiedOn = GETDATE()
-      WHERE QuestionId = ${id}`,
-  );
 
   revalidatePath("/questions");
   revalidatePath("/");

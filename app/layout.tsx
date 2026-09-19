@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { MathJaxContext } from "better-react-mathjax";
 import { ToastContainer } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
 import 'rsuite/dist/rsuite-no-reset.css';
@@ -31,7 +32,12 @@ export default function RootLayout({
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="flex min-h-full bg-zinc-50">
-        {children}
+        {/* startup.typeset: false — without it, MathJax's combined CDN bundle
+            auto-typesets the whole page on load, mutating any raw `\( \)`
+            text anywhere in the DOM (not just inside <MathJax>), which races
+            React hydration. MathText's own <MathJax> instances typeset
+            themselves; nothing else should. */}
+        <MathJaxContext config={{ startup: { typeset: false } }}>{children}</MathJaxContext>
         <ToastContainer position="top-right" autoClose={4000} newestOnTop />
       </body>
     </html>

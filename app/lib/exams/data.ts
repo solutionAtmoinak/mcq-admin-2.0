@@ -1,6 +1,4 @@
-import { prisma } from "@/app/lib/db/prisma";
-import { requireUser } from "@/app/lib/auth/auth";
-import { MASTER_FRANCHISE_ID } from "@/app/lib/shared/constants";
+import { callTeacherService } from "@/app/lib/db/teacherService";
 import {
   buildTemplateDraftFromExam,
   filterJsonToTemplateDraft,
@@ -9,8 +7,13 @@ import {
   type MockTestRecipe,
   type TemplateDraft,
 } from "./schema";
-import { getServiceOptions } from "@/app/lib/db/serviceConfig";
-import { toLabelRecord } from "@/app/lib/db/serviceOptions";
+
+function assertOk<T>(result: T | string | undefined, fallback: string): T {
+  if (result === undefined || typeof result === "string") {
+    throw new Error(typeof result === "string" ? result : fallback);
+  }
+  return result;
+}
 
 export type BlueprintTemplateListItem = {
   templateId: string;
@@ -22,30 +25,26 @@ export type BlueprintTemplateListItem = {
   isOwner: boolean;
 };
 
+// Mode 17 of dbo.spMcqTeacherService — see mcq-admin/sql/spMcqTeacherService.sql.
 // Every franchise sees its own templates. Non-master franchises additionally
 // see (read-only) the master franchise's templates, so they can be reused as
 // a starting point for a new exam — but master's own templates are only
 // ever editable by master (see getBlueprintTemplateForEdit), and master
 // itself only sees its own (it never sees another franchise's templates).
-export async function listBlueprintTemplates(): Promise<BlueprintTemplateListItem[]> {
-  const currentUser = await requireUser();
-  const isMaster = currentUser.franchiseId === MASTER_FRANCHISE_ID;
+// FranchiseId-vs-master comparison now happens in the SP.
+type RawBlueprintTemplateListItem = { TemplateId: string; Name: string; FilterJson: string; IsOwner: boolean };
 
-  const rows = await prisma.blueprintTemplate.findMany({
-    where: isMaster
-      ? { IsDeleted: false, IsActive: true, FranchiseId: MASTER_FRANCHISE_ID }
-      : {
-          IsDeleted: false,
-          IsActive: true,
-          OR: [{ FranchiseId: currentUser.franchiseId }, { FranchiseId: MASTER_FRANCHISE_ID }],
-        },
-    orderBy: { CreatedOn: "desc" },
-  });
-  return rows.map((r) => ({
-    templateId: r.TemplateId.toString(),
+export async function listBlueprintTemplates(): Promise<BlueprintTemplateListItem[]> {
+  const rows = assertOk(
+    await callTeacherService<RawBlueprintTemplateListItem[] | string>(17, {}),
+    "Failed to load templates.",
+  );
+
+  return (rows ?? []).map((r) => ({
+    templateId: r.TemplateId,
     name: r.Name,
     filterJson: parseBlueprintFilterJson(r.FilterJson),
-    isOwner: r.FranchiseId === currentUser.franchiseId,
+    isOwner: r.IsOwner,
   }));
 }
 
@@ -54,45 +53,35 @@ export type BlueprintTemplateDraftForEdit = {
   draft: TemplateDraft;
 };
 
-// Edit-page counterpart to listBlueprintTemplates — reshapes one template's
-// FilterJson into the same TemplateDraft the designer already knows how to
-// render/validate. filterJsonToTemplateDraft blanks the name (that fn is
-// also used for the "copy" flow on the exam page, where a copy needs its
-// own name) — restore the template's own name here since this is editing
-// that exact row, not spinning off a new one.
-// Strict ownership only — no master-franchise fallback here, unlike
-// listBlueprintTemplates. A master template may only be edited by master,
-// and master may not edit (or even open) another franchise's template.
+// Mode 18. Edit-page counterpart to listBlueprintTemplates — reshapes one
+// template's FilterJson into the same TemplateDraft the designer already
+// knows how to render/validate. filterJsonToTemplateDraft blanks the name
+// (that fn is also used for the "copy" flow on the exam page, where a copy
+// needs its own name) — restore the template's own name here since this is
+// editing that exact row, not spinning off a new one. Strict ownership only
+// — no master-franchise fallback, unlike listBlueprintTemplates.
+type RawBlueprintTemplate = { TemplateId: string; Name: string; FilterJson: string } | null;
+
 export async function getBlueprintTemplateForEdit(templateId: string): Promise<BlueprintTemplateDraftForEdit | null> {
-  const currentUser = await requireUser();
-
-  let id: bigint;
-  try {
-    id = BigInt(templateId);
-  } catch {
-    return null;
-  }
-
-  const row = await prisma.blueprintTemplate.findFirst({
-    where: { TemplateId: id, IsDeleted: false, FranchiseId: currentUser.franchiseId },
-  });
+  const row = assertOk(
+    await callTeacherService<RawBlueprintTemplate | string>(18, { TemplateId: templateId }),
+    "Failed to load template.",
+  );
   if (!row) return null;
 
   const filterJson = parseBlueprintFilterJson(row.FilterJson);
   const draft: TemplateDraft = { ...filterJsonToTemplateDraft(filterJson), name: row.Name };
 
-  return { templateId: row.TemplateId.toString(), draft };
+  return { templateId: row.TemplateId, draft };
 }
 
+// Mode 19.
 export async function listTestKinds(): Promise<{ code: string; name: string }[]> {
-  await requireUser();
-
-  const rows = await prisma.testKind.findMany({
-    where: { IsDeleted: false },
-    orderBy: { TestKindId: "asc" },
-    select: { Code: true, Name: true },
-  });
-  return rows.map((r) => ({ code: r.Code, name: r.Name }));
+  const rows = assertOk(
+    await callTeacherService<{ Code: string; Name: string }[] | string>(19, {}),
+    "Failed to load test kinds.",
+  );
+  return (rows ?? []).map((r) => ({ code: r.Code, name: r.Name }));
 }
 
 // No local Package table (and MockTestPackage carries no name column
@@ -115,60 +104,54 @@ export type MockTestListItem = {
   questionCount: number;
 };
 
+type RawMockTestListItem = {
+  MockTestId: string;
+  Code: string;
+  Name: string;
+  Status: number;
+  StatusLabel: string | null;
+  PaperName: string;
+  TestKindName: string;
+  TotalMarks: string;
+  DurationMin: number;
+  CreatedOn: string;
+  QuestionCount: number;
+  Packages: { PackageId: string }[] | null;
+};
+
+type RawMockTestListResult = { Total: number; Items: RawMockTestListItem[] | null };
+
+// Mode 3. IsPersonalized rows are student-generated (see Mode 7 in
+// student-portal/sql/spMcqStudentService.sql) — they're real MockTest rows
+// but never admin-authored, so the SP excludes them from this list; a
+// student reaches theirs directly at its own URL, never through here.
+// Franchise scoping and the EXAM_STATUS label lookup both happen inside the
+// SP now, not in this function.
 export async function listMockTests(opts: { page: number; pageSize: number }): Promise<{ items: MockTestListItem[]; total: number }> {
-  const currentUser = await requireUser();
-
-  // IsPersonalized rows are student-generated (see Mode 7 in
-  // student-portal/sql/spMcqStudentService.sql) — they're real MockTest
-  // rows but never admin-authored, so they don't belong in this list; a
-  // student reaches theirs directly at its own URL, never through here.
-  const where = { IsDeleted: false, FranchiseId: currentUser.franchiseId, IsPersonalized: false };
-  const [rows, total, examStatusOptions] = await Promise.all([
-    prisma.mockTest.findMany({
-      where,
-      orderBy: { CreatedOn: "desc" },
-      include: {
-        ExamPaper: { select: { Name: true, TotalMarks: true, DurationMin: true } },
-        TestKind: { select: { Name: true } },
-        MockTestPackage: { where: { IsDeleted: false }, select: { PackageId: true } },
-      },
-      skip: (opts.page - 1) * opts.pageSize,
-      take: opts.pageSize,
+  const result = assertOk(
+    await callTeacherService<RawMockTestListResult | string>(3, {
+      Page: opts.page,
+      PageSize: opts.pageSize,
     }),
-    prisma.mockTest.count({ where }),
-    getServiceOptions("EXAM_STATUS"),
-  ]);
-  const statusLabels = toLabelRecord(examStatusOptions);
-
-  // Same groupBy-by-MockTestId pattern changeMockTestStatus already uses
-  // (there grouped by SectionId instead) — one query for the whole page's
-  // picked-question counts rather than one per row.
-  const mockTestIds = rows.map((r) => r.MockTestId);
-  const questionCounts = mockTestIds.length
-    ? await prisma.testQuestion.groupBy({
-        by: ["MockTestId"],
-        where: { MockTestId: { in: mockTestIds }, IsDeleted: false },
-        _count: { _all: true },
-      })
-    : [];
-  const questionCountByMockTestId = new Map(questionCounts.map((c) => [c.MockTestId.toString(), c._count._all]));
+    "Failed to load exams.",
+  );
 
   return {
-    items: rows.map((r) => ({
-      mockTestId: r.MockTestId.toString(),
+    items: (result.Items ?? []).map((r) => ({
+      mockTestId: r.MockTestId,
       code: r.Code,
       name: r.Name,
       status: r.Status,
-      statusLabel: statusLabels[r.Status] ?? "Unknown",
-      paperName: r.ExamPaper.Name,
-      testKindName: r.TestKind.Name,
-      totalMarks: r.ExamPaper.TotalMarks.toString(),
-      durationMin: r.ExamPaper.DurationMin,
-      createdOn: r.CreatedOn,
-      packages: r.MockTestPackage.map((p) => ({ packageId: p.PackageId.toString() })),
-      questionCount: questionCountByMockTestId.get(r.MockTestId.toString()) ?? 0,
+      statusLabel: r.StatusLabel ?? "Unknown",
+      paperName: r.PaperName,
+      testKindName: r.TestKindName,
+      totalMarks: r.TotalMarks,
+      durationMin: r.DurationMin,
+      createdOn: new Date(r.CreatedOn),
+      packages: (r.Packages ?? []).map((p) => ({ packageId: p.PackageId })),
+      questionCount: r.QuestionCount,
     })),
-    total,
+    total: result.Total ?? 0,
   };
 }
 
@@ -211,114 +194,101 @@ export type MockTestDetail = {
   sections: MockTestSectionView[];
 };
 
+// Mode 20 raw shape — see that mode's SQL header for why this stays three
+// raw slices (MockTest/PaperSections/TestQuestions) instead of being fully
+// pre-grouped server-side: the SelectionPolicyJson recipe parsing and
+// per-section grouping below is unchanged from the old Prisma version.
+type RawMockTestForEdit = {
+  MockTest: {
+    MockTestId: string;
+    Code: string;
+    Name: string;
+    Status: number;
+    StatusLabel: string | null;
+    PaperName: string;
+    TotalMarks: string;
+    DurationMin: number;
+    SelectionPolicyJson: string | null;
+  };
+  PaperSections: { SectionId: string; RulesJson: string }[] | null;
+  TestQuestions: {
+    SectionId: string;
+    SeqNo: number;
+    QuestionId: string;
+    Code: string;
+    TypeName: string;
+    Difficulty: number;
+    Status: number;
+    LotNo: string | null;
+    Marks: string;
+    Negative: string;
+    Presentation: unknown;
+    TagNames: { Name: string }[] | null;
+  }[] | null;
+} | null;
+
 export async function getMockTestForEdit(mockTestId: string): Promise<MockTestDetail | null> {
-  const currentUser = await requireUser();
-
-  let id: bigint;
-  try {
-    id = BigInt(mockTestId);
-  } catch {
-    return null;
-  }
-
-  const [row, examStatusOptions] = await Promise.all([
-    prisma.mockTest.findFirst({
-      where: { MockTestId: id, IsDeleted: false, FranchiseId: currentUser.franchiseId },
-      include: { ExamPaper: { select: { Name: true, TotalMarks: true, DurationMin: true } } },
-    }),
-    getServiceOptions("EXAM_STATUS"),
-  ]);
+  const row = assertOk(
+    await callTeacherService<RawMockTestForEdit | string>(20, { MockTestId: mockTestId }),
+    "Failed to load exam.",
+  );
   if (!row) return null;
-  const statusLabels = toLabelRecord(examStatusOptions);
+
+  const mt = row.MockTest;
 
   // Rows seeded before this recipe shape existed (e.g. the DB_SCHEMA.sql demo
   // row) carry a different, ad-hoc SelectionPolicyJson — treat anything
   // without a real `sections` array as "no recipe" rather than crashing.
-  const parsedPolicy: unknown = row.SelectionPolicyJson ? JSON.parse(row.SelectionPolicyJson) : null;
+  const parsedPolicy: unknown = mt.SelectionPolicyJson ? JSON.parse(mt.SelectionPolicyJson) : null;
   const recipe: MockTestRecipe | null =
     parsedPolicy && typeof parsedPolicy === "object" && Array.isArray((parsedPolicy as MockTestRecipe).sections)
       ? (parsedPolicy as MockTestRecipe)
       : null;
 
-  const sectionIds = (recipe?.sections ?? []).map((s) => BigInt(s.sectionId));
-
-  // One query for every section's live marking rules (RulesJson.marks/
-  // negative — the recipe snapshot only kept pool/mandatory, see
-  // MockTestRecipe) and one for every picked question across all sections,
-  // rather than round-tripping per section.
-  const [paperSections, testQuestions] = await Promise.all([
-    sectionIds.length
-      ? prisma.paperSection.findMany({ where: { SectionId: { in: sectionIds } } })
-      : Promise.resolve([]),
-    sectionIds.length
-      ? prisma.testQuestion.findMany({
-          where: { MockTestId: id, SectionId: { in: sectionIds }, IsDeleted: false },
-          orderBy: { SeqNo: "asc" },
-          include: {
-            Question: {
-              include: {
-                QuestionType: true,
-                QuestionVersion_Question_CurrentVersionIdToQuestionVersion: true,
-                QuestionTag: { include: { Tag: true } },
-                QuestionLot: true,
-              },
-            },
-          },
-        })
-      : Promise.resolve([]),
-  ]);
-
   const rulesBySectionId = new Map<string, { marks: number; negative: number }>();
-  for (const ps of paperSections) {
+  for (const ps of row.PaperSections ?? []) {
     try {
       const rules = JSON.parse(ps.RulesJson) as { marks: number; negative: number };
-      rulesBySectionId.set(ps.SectionId.toString(), { marks: rules.marks, negative: rules.negative });
+      rulesBySectionId.set(ps.SectionId, { marks: rules.marks, negative: rules.negative });
     } catch {
       // leave unset — falls back to 0 below
     }
   }
 
   const questionsBySectionId = new Map<string, PickedQuestionView[]>();
-  for (const tq of testQuestions) {
-    const q = tq.Question;
-    const version = q.QuestionVersion_Question_CurrentVersionIdToQuestionVersion;
+  for (const tq of row.TestQuestions ?? []) {
     let stemPreview = "(no content)";
-    if (version) {
-      try {
-        const presentation = JSON.parse(version.PresentationJson) as { stem?: string };
-        if (presentation.stem) stemPreview = presentation.stem;
-      } catch {
-        // leave default preview
-      }
+    if (tq.Presentation && typeof tq.Presentation === "object" && "stem" in tq.Presentation) {
+      const stem = (tq.Presentation as { stem?: unknown }).stem;
+      if (typeof stem === "string" && stem) stemPreview = stem;
     }
     const view: PickedQuestionView = {
-      questionId: q.QuestionId.toString(),
-      code: q.Code,
+      questionId: tq.QuestionId,
+      code: tq.Code,
       stemPreview,
-      typeName: q.QuestionType.Name,
-      difficulty: q.Difficulty,
-      status: q.Status,
-      tagNames: q.QuestionTag.map((qt) => qt.Tag.Name),
-      lotNo: q.QuestionLot?.LotNo ?? null,
+      typeName: tq.TypeName,
+      difficulty: tq.Difficulty,
+      status: tq.Status,
+      tagNames: (tq.TagNames ?? []).map((t) => t.Name),
+      lotNo: tq.LotNo,
       seqNo: tq.SeqNo,
-      marks: tq.EffectiveMarks.toString(),
-      negative: tq.EffectiveNegative.toString(),
+      marks: tq.Marks,
+      negative: tq.Negative,
     };
-    const sectionKey = tq.SectionId.toString();
-    const list = questionsBySectionId.get(sectionKey);
+    const list = questionsBySectionId.get(tq.SectionId);
     if (list) list.push(view);
-    else questionsBySectionId.set(sectionKey, [view]);
+    else questionsBySectionId.set(tq.SectionId, [view]);
   }
 
   return {
-    mockTestId: row.MockTestId.toString(),
-    code: row.Code,
-    name: row.Name,
-    status: row.Status,
-    statusLabel: statusLabels[row.Status] ?? "Unknown",
-    paperName: row.ExamPaper.Name,
-    totalMarks: row.ExamPaper.TotalMarks.toString(),
-    durationMin: row.ExamPaper.DurationMin,
+    mockTestId: mt.MockTestId,
+    code: mt.Code,
+    name: mt.Name,
+    status: mt.Status,
+    statusLabel: mt.StatusLabel ?? "Unknown",
+    paperName: mt.PaperName,
+    totalMarks: mt.TotalMarks,
+    durationMin: mt.DurationMin,
     templateId: recipe?.templateId ?? null,
     sections: (recipe?.sections ?? []).map((s) => {
       const rules = rulesBySectionId.get(s.sectionId);
@@ -349,43 +319,39 @@ export type MockTestDraftForEdit = {
   pickedBySectionId: Record<string, number>;
 };
 
-// Edit-page counterpart to getMockTestForEdit's read-only view — pulls the
-// live ExamPaper/PaperSection/MarkingScheme/TestKind rows (each MockTest has
-// its own dedicated, never-shared copies — see materializeMockTest) and
-// reshapes them into the same TemplateDraft the designer already knows how
-// to render and validate.
+// Mode 21. Edit-page counterpart to getMockTestForEdit's read-only view —
+// pulls the live ExamPaper/PaperSection/MarkingScheme/TestKind rows (each
+// MockTest has its own dedicated, never-shared copies — see
+// materializeMockTest) and reshapes them into the same TemplateDraft the
+// designer already knows how to render and validate.
+type RawMockTestDraft = {
+  MockTestId: string;
+  Status: number;
+  ExamName: string;
+  TestKindCode: string;
+  TestKindName: string;
+  DurationMin: number;
+  MarkingSchemeName: string;
+  Instructions: string;
+  Sections: { SectionId: string; Name: string; RulesJson: string }[] | null;
+  PickedBySection: { SectionId: string; Picked: number }[] | null;
+} | null;
+
 export async function getMockTestDraftForEdit(mockTestId: string): Promise<MockTestDraftForEdit | null> {
-  const currentUser = await requireUser();
-
-  let id: bigint;
-  try {
-    id = BigInt(mockTestId);
-  } catch {
-    return null;
-  }
-
-  const row = await prisma.mockTest.findFirst({
-    where: { MockTestId: id, IsDeleted: false, FranchiseId: currentUser.franchiseId },
-    include: {
-      ExamPaper: {
-        include: {
-          MarkingScheme: true,
-          PaperSection: { where: { IsDeleted: false }, orderBy: { SeqNo: "asc" } },
-        },
-      },
-      TestKind: true,
-    },
-  });
+  const row = assertOk(
+    await callTeacherService<RawMockTestDraft | string>(21, { MockTestId: mockTestId }),
+    "Failed to load exam draft.",
+  );
   if (!row) return null;
 
   const draft = buildTemplateDraftFromExam({
-    examName: row.Name,
-    testKindCode: row.TestKind.Code,
-    testKindName: row.TestKind.Name,
-    durationMin: row.ExamPaper.DurationMin,
-    markingSchemeName: row.ExamPaper.MarkingScheme?.Name ?? "Standard Marking",
-    instructions: row.Instructions ?? "",
-    sections: row.ExamPaper.PaperSection.map((s) => {
+    examName: row.ExamName,
+    testKindCode: row.TestKindCode,
+    testKindName: row.TestKindName,
+    durationMin: row.DurationMin,
+    markingSchemeName: row.MarkingSchemeName,
+    instructions: row.Instructions,
+    sections: (row.Sections ?? []).map((s) => {
       const rules = JSON.parse(s.RulesJson) as {
         questionType: string;
         questions: number;
@@ -394,7 +360,7 @@ export async function getMockTestDraftForEdit(mockTestId: string): Promise<MockT
         negative: number;
       };
       return {
-        sectionId: s.SectionId.toString(),
+        sectionId: s.SectionId,
         name: s.Name,
         questionType: rules.questionType,
         questions: rules.questions,
@@ -405,13 +371,8 @@ export async function getMockTestDraftForEdit(mockTestId: string): Promise<MockT
     }),
   });
 
-  const pickedCounts = await prisma.testQuestion.groupBy({
-    by: ["SectionId"],
-    where: { MockTestId: id, IsDeleted: false },
-    _count: { _all: true },
-  });
   const pickedBySectionId: Record<string, number> = {};
-  for (const c of pickedCounts) pickedBySectionId[c.SectionId.toString()] = c._count._all;
+  for (const c of row.PickedBySection ?? []) pickedBySectionId[c.SectionId] = c.Picked;
 
-  return { mockTestId: row.MockTestId.toString(), status: row.Status, draft, pickedBySectionId };
+  return { mockTestId: row.MockTestId, status: row.Status, draft, pickedBySectionId };
 }

@@ -1,4 +1,5 @@
 import DeleteQuestionButton from "@/app/components/questions/DeleteQuestionButton";
+import QuestionStemCell from "@/app/components/questions/QuestionStemCell";
 import { FilterSelectPicker } from "@/app/components/common/FilterSelectPicker";
 import QuestionStatusBadge from "@/app/components/questions/QuestionStatusBadge";
 import { DataTable } from "@/app/components/table/DataTable";
@@ -163,8 +164,8 @@ export default async function QuestionsPage({
                     {q.code}
                   </Link>
                 </td>
-                <td className="max-w-md truncate px-4 py-2 text-zinc-700">
-                  {q.stemPreview}
+                <td className="max-w-md px-4 py-2 text-zinc-700">
+                  <QuestionStemCell questionCode={q.code} stem={q.stemPreview} />
                 </td>
                 <td className="px-4 py-2 text-zinc-500">{q.typeName}</td>
                 <td className="px-4 py-2 text-zinc-500">

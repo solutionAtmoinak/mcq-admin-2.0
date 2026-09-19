@@ -1,47 +1,47 @@
-import { prisma } from "@/app/lib/db/prisma";
-import { requireUser } from "@/app/lib/auth/auth";
+import { callTeacherService } from "@/app/lib/db/teacherService";
 import { getServiceOptions } from "@/app/lib/db/serviceConfig";
-import type { AttachedMedia } from "@/app/lib/auth/media";
+import { emptyQuestion } from "./schema";
 import type {
   ReferenceData,
   ReferenceTagOption,
   QuestionTypeCode,
   QuestionInput,
 } from "./schema";
-import { emptyQuestion } from "./schema";
+
+function assertOk<T>(result: T | string | undefined, fallback: string): T {
+  if (result === undefined || typeof result === "string") {
+    throw new Error(typeof result === "string" ? result : fallback);
+  }
+  return result;
+}
+
+// Mode 5 of dbo.spMcqTeacherService — see mcq-admin/sql/spMcqTeacherService.sql.
+type RawReferenceData = {
+  QuestionTypes: { Id: number; Code: string; Name: string }[] | null;
+  Dimensions: { Id: number; Code: string; Name: string }[] | null;
+  Tags: { Id: string; DimensionId: number; Name: string }[] | null;
+};
 
 export async function getReferenceData(): Promise<ReferenceData> {
-  const currentUser = await requireUser();
-
-  const [questionTypes, dimensions, tags, questionStatusOptions, difficultyOptions] = await Promise.all([
-    prisma.questionType.findMany({
-      where: { IsDeleted: false, IsActive: true },
-      orderBy: { QuestionTypeId: "asc" },
-    }),
-    prisma.tagDimension.findMany({
-      where: { IsDeleted: false, IsActive: true, FranchiseId: currentUser.franchiseId },
-      orderBy: { Name: "asc" },
-    }),
-    prisma.tag.findMany({
-      where: { IsDeleted: false, IsActive: true, FranchiseId: currentUser.franchiseId },
-      orderBy: { Name: "asc" },
-    }),
+  const [raw, questionStatusOptions, difficultyOptions] = await Promise.all([
+    callTeacherService<RawReferenceData | string>(5, {}),
     getServiceOptions("QUESTION_STATUS"),
     getServiceOptions("QUESTION_DIFFICULTY"),
   ]);
+  const result = assertOk(raw, "Failed to load reference data.");
 
   const tagsByDimensionId: Record<number, ReferenceTagOption[]> = {};
-  for (const t of tags) {
-    (tagsByDimensionId[t.DimensionId] ??= []).push({ id: t.TagId.toString(), name: t.Name });
+  for (const t of result.Tags ?? []) {
+    (tagsByDimensionId[t.DimensionId] ??= []).push({ id: t.Id, name: t.Name });
   }
 
   return {
-    questionTypes: questionTypes.map((t) => ({
-      id: t.QuestionTypeId,
+    questionTypes: (result.QuestionTypes ?? []).map((t) => ({
+      id: t.Id,
       code: t.Code as QuestionTypeCode,
       name: t.Name,
     })),
-    dimensions: dimensions.map((d) => ({ id: d.DimensionId, code: d.Code, name: d.Name })),
+    dimensions: (result.Dimensions ?? []).map((d) => ({ id: d.Id, code: d.Code, name: d.Name })),
     tagsByDimensionId,
     questionStatusOptions,
     difficultyOptions,
@@ -55,38 +55,27 @@ export type BankSummary = {
   byType: { code: string; name: string; count: number }[];
 };
 
+// Mode 6.
+type RawBankSummary = {
+  Total: number;
+  RecentCount: number;
+  ByStatus: { Status: number; Count: number }[] | null;
+  ByType: { Code: string; Name: string; Count: number }[] | null;
+};
+
 export async function getBankSummary(): Promise<BankSummary> {
-  const currentUser = await requireUser();
-
-  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-  const franchiseId = currentUser.franchiseId;
-
-  const [total, recentCount, byStatusRaw, types] = await Promise.all([
-    prisma.question.count({ where: { IsDeleted: false, FranchiseId: franchiseId } }),
-    prisma.question.count({
-      where: { IsDeleted: false, FranchiseId: franchiseId, CreatedOn: { gte: sevenDaysAgo } },
-    }),
-    prisma.question.groupBy({
-      by: ["Status"],
-      where: { IsDeleted: false, FranchiseId: franchiseId },
-      _count: { _all: true },
-    }),
-    prisma.questionType.findMany({
-      where: { IsDeleted: false },
-      orderBy: { QuestionTypeId: "asc" },
-      include: {
-        _count: { select: { Question: { where: { IsDeleted: false, FranchiseId: franchiseId } } } },
-      },
-    }),
-  ]);
+  const result = assertOk(
+    await callTeacherService<RawBankSummary | string>(6, {}),
+    "Failed to load bank summary.",
+  );
 
   return {
-    total,
-    recentCount,
-    byStatus: byStatusRaw
-      .map((r) => ({ status: r.Status, count: r._count._all }))
+    total: result.Total,
+    recentCount: result.RecentCount,
+    byStatus: (result.ByStatus ?? [])
+      .map((r) => ({ status: r.Status, count: r.Count }))
       .sort((a, b) => a.status - b.status),
-    byType: types.map((t) => ({ code: t.Code, name: t.Name, count: t._count.Question })),
+    byType: (result.ByType ?? []).map((t) => ({ code: t.Code, name: t.Name, count: t.Count })),
   };
 }
 
@@ -117,128 +106,92 @@ export type QuestionListFilters = {
   excludeIds?: string[];
 };
 
-// Shared by listQuestions (paginated rows) and listQuestionIdsForFilter
-// (bare id list for "select all matching") so the two can never drift apart
-// on what counts as a match. Every caller scopes this to the requesting
-// user's own franchise — a franchise only ever sees questions created at
-// that franchise.
-function buildQuestionWhere(filters: QuestionListFilters, franchiseId: bigint | null) {
-  // An unparseable lotId (shouldn't happen — the filter is always populated
-  // from listQuestionLots' own ids — but a garbage value should still match
-  // nothing rather than silently ignoring the filter) collapses to an id no
-  // real QuestionLot can ever have.
-  let lotIdBigInt: bigint | undefined;
-  if (filters.lotId) {
-    try {
-      lotIdBigInt = BigInt(filters.lotId);
-    } catch {
-      lotIdBigInt = BigInt(-1);
-    }
-  }
-
+// Shared by listQuestions (Mode 7) and listQuestionIdsForFilter (Mode 8) —
+// both modes implement the identical filter server-side (see the SQL file's
+// header comment for those modes); this just shapes the params the same way
+// for both calls so they can never drift on what a filter field means.
+function buildFilterParams(filters: QuestionListFilters): Record<string, unknown> {
   return {
-    IsDeleted: false,
-    FranchiseId: franchiseId,
-    ...(filters.typeId ? { QuestionTypeId: filters.typeId } : {}),
-    ...(filters.difficulty ? { Difficulty: filters.difficulty } : {}),
-    ...(filters.status !== undefined ? { Status: filters.status } : {}),
-    ...(lotIdBigInt !== undefined ? { LotId: lotIdBigInt } : {}),
-    ...(filters.excludeIds?.length
-      ? { QuestionId: { notIn: filters.excludeIds.map((id) => BigInt(id)) } }
-      : {}),
-    ...(filters.tagKeys?.length || filters.tagValues?.length
-      ? {
-          QuestionTag: {
-            some: {
-              Tag: {
-                ...(filters.tagValues?.length ? { Name: { in: filters.tagValues } } : {}),
-                ...(filters.tagKeys?.length
-                  ? { TagDimension: { Name: { in: filters.tagKeys } } }
-                  : {}),
-              },
-            },
-          },
-        }
-      : {}),
-    ...(filters.q
-      ? { QuestionSearch: { some: { SearchText: { contains: filters.q } } } }
-      : {}),
+    Q: filters.q,
+    TypeId: filters.typeId,
+    Difficulty: filters.difficulty,
+    Status: filters.status,
+    LotId: filters.lotId,
+    TagKeys: filters.tagKeys?.length ? filters.tagKeys.join(",") : undefined,
+    TagValues: filters.tagValues?.length ? filters.tagValues.join(",") : undefined,
+    ExcludeIds: filters.excludeIds?.length ? filters.excludeIds.join(",") : undefined,
   };
 }
 
+function stemPreviewFrom(presentation: unknown): string {
+  if (presentation && typeof presentation === "object" && "stem" in presentation) {
+    const stem = (presentation as { stem?: unknown }).stem;
+    if (typeof stem === "string" && stem) return stem;
+  }
+  return "(no content)";
+}
+
+type RawQuestionListItem = {
+  Id: string;
+  Code: string;
+  TypeCode: string;
+  TypeName: string;
+  Difficulty: number;
+  Status: number;
+  Presentation: unknown;
+  TagNames: { Name: string }[] | null;
+  CreatedOn: string;
+  LotNo: string | null;
+};
+
+type RawQuestionListResult = { Total: number; Items: RawQuestionListItem[] | null };
+
 export async function listQuestions(
-  filters: QuestionListFilters & { page: number; pageSize: number }
+  filters: QuestionListFilters & { page: number; pageSize: number },
 ): Promise<{ items: QuestionListItem[]; total: number }> {
-  const currentUser = await requireUser();
-
-  const where = buildQuestionWhere(filters, currentUser.franchiseId);
-
-  const [rows, total] = await Promise.all([
-    prisma.question.findMany({
-      where,
-      orderBy: { CreatedOn: "desc" },
-      skip: (filters.page - 1) * filters.pageSize,
-      take: filters.pageSize,
-      include: {
-        QuestionType: true,
-        QuestionVersion_Question_CurrentVersionIdToQuestionVersion: true,
-        QuestionTag: { include: { Tag: true } },
-        QuestionLot: true,
-      },
+  const result = assertOk(
+    await callTeacherService<RawQuestionListResult | string>(7, {
+      ...buildFilterParams(filters),
+      Page: filters.page,
+      PageSize: filters.pageSize,
     }),
-    prisma.question.count({ where }),
-  ]);
+    "Failed to load questions.",
+  );
 
-  const items: QuestionListItem[] = rows.map((q) => {
-    const version = q.QuestionVersion_Question_CurrentVersionIdToQuestionVersion;
-    let stemPreview = "(no content)";
-    if (version) {
-      try {
-        const presentation = JSON.parse(version.PresentationJson) as { stem?: string };
-        if (presentation.stem) stemPreview = presentation.stem;
-      } catch {
-        // leave default preview
-      }
-    }
-    return {
-      id: q.QuestionId.toString(),
+  return {
+    items: (result.Items ?? []).map((q) => ({
+      id: q.Id,
       code: q.Code,
-      typeCode: q.QuestionType.Code,
-      typeName: q.QuestionType.Name,
+      typeCode: q.TypeCode,
+      typeName: q.TypeName,
       difficulty: q.Difficulty,
       status: q.Status,
-      stemPreview,
-      tagNames: q.QuestionTag.map((qt) => qt.Tag.Name),
-      createdOn: q.CreatedOn.toISOString(),
-      lotNo: q.QuestionLot?.LotNo ?? null,
-    };
-  });
-
-  return { items, total };
+      stemPreview: stemPreviewFrom(q.Presentation),
+      tagNames: (q.TagNames ?? []).map((t) => t.Name),
+      createdOn: q.CreatedOn,
+      lotNo: q.LotNo,
+    })),
+    total: result.Total ?? 0,
+  };
 }
 
 // Bare id list for a filter, capped at `limit` — powers the question
-// picker's "select all matching filters" action, which needs every matching
-// id (not just the current page) without paying for full row hydration.
+// picker's "select all matching filters" action.
+type RawQuestionIdsResult = { Total: number; Ids: { Id: string }[] | null };
+
 export async function listQuestionIdsForFilter(
   filters: QuestionListFilters,
-  limit: number
+  limit: number,
 ): Promise<{ ids: string[]; total: number }> {
-  const currentUser = await requireUser();
-
-  const where = buildQuestionWhere(filters, currentUser.franchiseId);
-
-  const [rows, total] = await Promise.all([
-    prisma.question.findMany({
-      where,
-      orderBy: { CreatedOn: "desc" },
-      take: Math.max(0, limit),
-      select: { QuestionId: true },
+  const result = assertOk(
+    await callTeacherService<RawQuestionIdsResult | string>(8, {
+      ...buildFilterParams(filters),
+      Limit: Math.max(0, Math.min(limit, 2000)),
     }),
-    prisma.question.count({ where }),
-  ]);
+    "Failed to load question ids.",
+  );
 
-  return { ids: rows.map((r) => r.QuestionId.toString()), total };
+  return { ids: (result.Ids ?? []).map((r) => r.Id), total: result.Total ?? 0 };
 }
 
 export type QuestionLotOption = {
@@ -248,30 +201,21 @@ export type QuestionLotOption = {
   createdOn: string;
 };
 
-// Powers the question picker's lot filter — only lots that still have at
-// least one active question are worth offering, and the most recent ones
-// (each "Create Questions" browser session mints its own lot) are what an
-// admin is almost always looking for.
+// Mode 9.
+type RawQuestionLot = { LotId: string; LotNo: string; QuestionCount: number; CreatedOn: string };
+
 export async function listQuestionLots(): Promise<QuestionLotOption[]> {
-  const currentUser = await requireUser();
+  const rows = assertOk(
+    await callTeacherService<RawQuestionLot[] | string>(9, {}),
+    "Failed to load question lots.",
+  );
 
-  const lots = await prisma.questionLot.findMany({
-    where: { IsDeleted: false, FranchiseId: currentUser.franchiseId },
-    orderBy: { CreatedOn: "desc" },
-    take: 200,
-    include: {
-      _count: { select: { Question: { where: { IsDeleted: false, FranchiseId: currentUser.franchiseId } } } },
-    },
-  });
-
-  return lots
-    .filter((l) => l._count.Question > 0)
-    .map((l) => ({
-      lotId: l.LotId.toString(),
-      lotNo: l.LotNo,
-      questionCount: l._count.Question,
-      createdOn: l.CreatedOn.toISOString(),
-    }));
+  return (rows ?? []).map((l) => ({
+    lotId: l.LotId,
+    lotNo: l.LotNo,
+    questionCount: l.QuestionCount,
+    createdOn: l.CreatedOn,
+  }));
 }
 
 export type TodayQuestionItem = {
@@ -282,43 +226,22 @@ export type TodayQuestionItem = {
   createdOn: string;
 };
 
-// Powers the "today's questions" side explorer on the Create Questions page —
-// questions already saved today, so freshly-created ones show up alongside
-// the in-progress rows still being edited in the current session.
+// Mode 10.
+type RawTodayQuestion = { Id: string; Code: string; Presentation: unknown; Status: number; CreatedOn: string };
+
 export async function getTodayQuestions(limit = 50): Promise<TodayQuestionItem[]> {
-  const currentUser = await requireUser();
+  const rows = assertOk(
+    await callTeacherService<RawTodayQuestion[] | string>(10, { Limit: limit }),
+    "Failed to load today's questions.",
+  );
 
-  const startOfDay = new Date();
-  startOfDay.setHours(0, 0, 0, 0);
-
-  const rows = await prisma.question.findMany({
-    where: { IsDeleted: false, FranchiseId: currentUser.franchiseId, CreatedOn: { gte: startOfDay } },
-    orderBy: { CreatedOn: "desc" },
-    take: limit,
-    include: {
-      QuestionVersion_Question_CurrentVersionIdToQuestionVersion: true,
-    },
-  });
-
-  return rows.map((q) => {
-    const version = q.QuestionVersion_Question_CurrentVersionIdToQuestionVersion;
-    let stemPreview = "(no content)";
-    if (version) {
-      try {
-        const presentation = JSON.parse(version.PresentationJson) as { stem?: string };
-        if (presentation.stem) stemPreview = presentation.stem;
-      } catch {
-        // leave default preview
-      }
-    }
-    return {
-      id: q.QuestionId.toString(),
-      code: q.Code,
-      stemPreview,
-      status: q.Status,
-      createdOn: q.CreatedOn.toISOString(),
-    };
-  });
+  return (rows ?? []).map((q) => ({
+    id: q.Id,
+    code: q.Code,
+    stemPreview: stemPreviewFrom(q.Presentation),
+    status: q.Status,
+    createdOn: q.CreatedOn,
+  }));
 }
 
 export type EditableQuestion = {
@@ -333,55 +256,46 @@ export type EditableQuestion = {
   input: QuestionInput;
 };
 
+// Mode 11.
+type RawQuestionForEdit = {
+  QuestionId: string;
+  Code: string;
+  TypeCode: string;
+  TypeName: string;
+  Status: number;
+  Difficulty: number;
+  EstSolveSec: number | null;
+  VersionNo: number | null;
+  Presentation: unknown;
+  Answer: unknown;
+  CreatedBy: string;
+  CreatedOn: string;
+  LotNo: string | null;
+  Tags: { DimensionName: string; TagName: string }[] | null;
+} | null;
+
 export async function getQuestionForEdit(questionId: string): Promise<EditableQuestion | null> {
-  const currentUser = await requireUser();
-
-  let id: bigint;
-  try {
-    id = BigInt(questionId);
-  } catch {
-    return null;
-  }
-
-  const q = await prisma.question.findFirst({
-    where: { QuestionId: id, IsDeleted: false, FranchiseId: currentUser.franchiseId },
-    include: {
-      QuestionType: true,
-      QuestionVersion_Question_CurrentVersionIdToQuestionVersion: true,
-      QuestionTag: { include: { Tag: { include: { TagDimension: true } } } },
-      QuestionLot: true,
-    },
-  });
+  const q = assertOk(
+    await callTeacherService<RawQuestionForEdit | string>(11, { QuestionId: questionId }),
+    "Failed to load question.",
+  );
   if (!q) return null;
 
-  const version = q.QuestionVersion_Question_CurrentVersionIdToQuestionVersion;
-  let presentation: {
+  const presentation = (q.Presentation ?? {}) as {
     stem?: string;
-    media?: AttachedMedia;
-    options?: { id: string; text: string; media?: AttachedMedia }[];
+    media?: QuestionInput["media"];
+    options?: QuestionInput["options"];
     responseType?: string;
-  } = {};
-  let answer: {
+  };
+  const answer = (q.Answer ?? {}) as {
     correct?: string[] | number | string;
     marks?: number;
     negative?: number;
     explanation?: string;
-    explanationMedia?: AttachedMedia;
-  } = {};
-  if (version) {
-    try {
-      presentation = JSON.parse(version.PresentationJson);
-    } catch {
-      // ignore malformed content
-    }
-    try {
-      answer = JSON.parse(version.AnswerJson);
-    } catch {
-      // ignore malformed content
-    }
-  }
+    explanationMedia?: QuestionInput["explanationMedia"];
+  };
 
-  const typeCode = q.QuestionType.Code as QuestionTypeCode;
+  const typeCode = q.TypeCode as QuestionInput["typeCode"];
   const isOptionBased = typeCode === "mcq_single" || typeCode === "msq";
 
   const input = emptyQuestion({
@@ -399,20 +313,20 @@ export async function getQuestionForEdit(questionId: string): Promise<EditableQu
     negativeMarks: answer.negative ?? 1,
     explanation: answer.explanation ?? "",
     explanationMedia: answer.explanationMedia ?? null,
-    tags: q.QuestionTag.length
-      ? q.QuestionTag.map((qt) => ({ key: qt.Tag.TagDimension.Name, value: qt.Tag.Name }))
+    tags: q.Tags?.length
+      ? q.Tags.map((t) => ({ key: t.DimensionName, value: t.TagName }))
       : [{ key: "", value: "" }],
   });
 
   return {
-    questionId: q.QuestionId.toString(),
+    questionId: q.QuestionId,
     code: q.Code,
-    typeName: q.QuestionType.Name,
+    typeName: q.TypeName,
     status: q.Status,
-    versionNo: version?.VersionNo ?? 1,
+    versionNo: q.VersionNo ?? 1,
     createdBy: q.CreatedBy,
-    createdOn: q.CreatedOn.toISOString(),
-    lotNo: q.QuestionLot?.LotNo ?? null,
+    createdOn: q.CreatedOn,
+    lotNo: q.LotNo,
     input,
   };
 }

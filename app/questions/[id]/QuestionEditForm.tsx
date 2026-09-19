@@ -13,6 +13,7 @@ import {
   type ReferenceData,
   type TagPair,
 } from "@/app/lib/questions/schema";
+import { MathTextPreview } from "@/app/components/common/MathText";
 import { TagPairEditor } from "@/app/components/questions/TagPairEditor";
 import StatusChanger from "@/app/components/questions/StatusChanger";
 import { AppSelectPicker } from "@/app/components/common/AppSelectPicker";
@@ -212,6 +213,7 @@ export default function QuestionEditForm({
                   value={data.stem}
                   onChange={(e) => update({ stem: e.target.value })}
                 />
+                <MathTextPreview text={data.stem} />
               </div>
               <div className="min-w-0 sm:w-60 sm:shrink-0">
                 <label className={labelClass}>Media (optional)</label>
@@ -276,6 +278,10 @@ export default function QuestionEditForm({
                         >
                           ✕
                         </button>
+                        <MathTextPreview
+                          text={opt.text}
+                          boxClassName="col-span-5 rounded-md border border-zinc-200 bg-zinc-50 px-2 py-1 text-sm text-zinc-800"
+                        />
                       </div>
                     );
                   })}
@@ -310,6 +316,7 @@ export default function QuestionEditForm({
                   value={data.explanation}
                   onChange={(e) => update({ explanation: e.target.value })}
                 />
+                <MathTextPreview text={data.explanation} />
               </div>
               <div className="min-w-0 sm:w-60 sm:shrink-0">
                 <label className={labelClass}>Explanation media (optional)</label>

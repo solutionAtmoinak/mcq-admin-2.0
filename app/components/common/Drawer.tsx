@@ -49,6 +49,7 @@ export default function Drawer({
   open,
   onClose,
   title,
+  subTitle,
   widthClass = "max-w-md",
   footer,
   scrollableBody = true,
@@ -57,6 +58,7 @@ export default function Drawer({
   open: boolean;
   onClose: () => void;
   title: string;
+  subTitle?: string;
   widthClass?: string;
   // Optional pinned action bar below the body — for content long enough to
   // scroll (e.g. a filtered table), this keeps primary actions like "Add"
@@ -99,12 +101,14 @@ export default function Drawer({
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className={`absolute right-0 top-0 flex h-full w-full ${widthClass} flex-col bg-white shadow-xl ${
-          open ? "translate-x-0" : "translate-x-full"
-        }`}
+        className={`absolute right-0 top-0 flex h-full w-full ${widthClass} flex-col bg-white shadow-xl ${open ? "translate-x-0" : "translate-x-full"
+          }`}
       >
         <div className="flex items-center justify-between border-b border-zinc-200 px-5 py-4">
-          <h2 className="text-sm font-semibold text-zinc-900">{title}</h2>
+          <div>
+            <h2 className="font-semibold text-zinc-900">{title}</h2>
+            {subTitle && <h4 className="text-xs text-zinc-700">{subTitle}</h4>}
+          </div>
           <button
             className="rounded-md p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600"
             onClick={onClose}
