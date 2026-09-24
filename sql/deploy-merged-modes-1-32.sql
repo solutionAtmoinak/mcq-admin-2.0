@@ -30,7 +30,7 @@ BEGIN
 DECLARE
     @Page INT, @PageSize INT, @Total INT, @Category NVARCHAR(250),
     @SevenDaysAgo DATETIME, @StartOfDay DATETIME,
-    @Q NVARCHAR(4000), @QPattern NVARCHAR(4010), @TypeId INT, @Difficulty TINYINT, @Status INT,
+    @Q NVARCHAR(4000), @QPattern NVARCHAR(MAX), @TypeId INT, @Difficulty TINYINT, @Status INT,
     @LotIdText NVARCHAR(50), @LotId BIGINT, @HasLotFilter BIT,
     @TagKeysCsv NVARCHAR(MAX), @TagValuesCsv NVARCHAR(MAX), @HasTagKeys BIT, @HasTagValues BIT,
     @ExcludeIdsCsv NVARCHAR(MAX), @HasExcludeIds BIT, @Limit INT, @QuestionId BIGINT,

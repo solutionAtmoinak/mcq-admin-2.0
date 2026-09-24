@@ -143,6 +143,15 @@ Two related but distinct concepts:
 | `TestQuestion` | `addQuestionsToSection`, `removeQuestionsFromSection` (soft-delete), `reorderSectionQuestions` | `getMockTestForEdit`, `getMockTestDraftForEdit` (picked-count) | The **actual, finalized, ordered** picks for a section — this is what the admin's question-picker UI writes. One row per (MockTest, Section, SeqNo). Every question picked this way gets a fixed `EffectiveMarks`/`EffectiveNegative` snapshot from the section's rules at pick time. |
 | `MockTestPackage` | `updateMockTestPackages` (hard delete + re-create, same pattern as `QuestionTag`) | `listMockTests` (packages per exam, for the "Packages" modal on `/exam-designer`) | Links a `MockTest` to a Package (the actual product a student buys) in the external LMS — there's no local `Package` table and no name column here either; only `PackageId` is stored. Display names are resolved live at read time against the LMS's `AuthDataGet/DExecuteJson` helper endpoint (`app/lib/exams/packages.ts`'s `listPackageOptions()`), never persisted. One exam can link to multiple packages. |
 
+**Timing & attempt-behaviour settings** (no schema change — all inside existing JSON columns):
+
+- `PaperSection.RulesJson.durationMin` — that section's time limit. `ExamPaper.DurationMin` is always the **sum** of these (never typed in separately), so anything reading the exam total keeps working.
+- `PaperSection.RulesJson.breakMin` — optional break (default 0) given **after** that section; ignored on the last section and **not** included in `ExamPaper.DurationMin`.
+- `MockTest.SettingsJson.sequentialSections` — a section must be submitted before the next unlocks.
+- `MockTest.SettingsJson.allowResume` — student may save answers and resume the attempt later.
+- Exams/templates saved before this have none of these keys: the designer back-fills section times by splitting `DurationMin` in proportion to question count (`splitLegacyDuration` in `schema.ts`), and both flags read as `false`. Templates carry the same values in `FilterJson` (`settings`, per-section `durationMin`/`breakMin`).
+- The admin only *stores* these. Enforcing them (per-section timers, locking, breaks, save/resume) is student-portal work — its current expiry check uses `StartedOn + DurationMin` only.
+
 **Not touched by admin at all: `TestPool`.** Same shape as `TestQuestion`
 (MockTest/Section/Question/Version + `IsMandatory`) but nothing in
 `app/lib/exams/` reads or writes it. Given the schema pairs `TestPool`

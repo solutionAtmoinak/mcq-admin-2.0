@@ -3,6 +3,7 @@ import {
   buildTemplateDraftFromExam,
   filterJsonToTemplateDraft,
   parseBlueprintFilterJson,
+  parseExamSettings,
   type BlueprintFilterJson,
   type MockTestRecipe,
   type TemplateDraft,
@@ -333,6 +334,8 @@ type RawMockTestDraft = {
   DurationMin: number;
   MarkingSchemeName: string;
   Instructions: string;
+  // MockTest.SettingsJson raw text — null for exams created before settings existed.
+  SettingsJson: string | null;
   Sections: { SectionId: string; Name: string; RulesJson: string }[] | null;
   PickedBySection: { SectionId: string; Picked: number }[] | null;
 } | null;
@@ -351,6 +354,7 @@ export async function getMockTestDraftForEdit(mockTestId: string): Promise<MockT
     durationMin: row.DurationMin,
     markingSchemeName: row.MarkingSchemeName,
     instructions: row.Instructions,
+    settings: parseExamSettings(row.SettingsJson ? JSON.parse(row.SettingsJson) : null),
     sections: (row.Sections ?? []).map((s) => {
       const rules = JSON.parse(s.RulesJson) as {
         questionType: string;
@@ -358,6 +362,8 @@ export async function getMockTestDraftForEdit(mockTestId: string): Promise<MockT
         mandatory: number;
         marks: number;
         negative: number;
+        durationMin?: number;
+        breakMin?: number;
       };
       return {
         sectionId: s.SectionId,
@@ -367,6 +373,8 @@ export async function getMockTestDraftForEdit(mockTestId: string): Promise<MockT
         mandatory: rules.mandatory,
         marks: rules.marks,
         negative: rules.negative,
+        durationMin: rules.durationMin,
+        breakMin: rules.breakMin,
       };
     }),
   });

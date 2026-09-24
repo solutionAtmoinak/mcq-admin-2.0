@@ -24,7 +24,12 @@ type HttpEnvelope = {
 type SpEnvelope = { statuscode: unknown; response: unknown };
 
 function isSpEnvelope(value: unknown): value is SpEnvelope {
-  return typeof value === "object" && value !== null && "response" in value && "statuscode" in value;
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "response" in value &&
+    "statuscode" in value
+  );
 }
 
 function parseUntilObject<T>(value: unknown): T {
@@ -90,13 +95,19 @@ export async function callTeacherService<T>(
   // for the same contract. Only a genuinely message-less failure throws.
   if (!res.ok || body?.isSuccess === false) {
     const message =
-      (Array.isArray(body?.errorMessages) ? body.errorMessages[0] : undefined) ??
+      (Array.isArray(body?.errorMessages)
+        ? body.errorMessages[0]
+        : undefined) ??
       (typeof body?.result === "string" ? body.result : undefined) ??
       (rawText.trim() && rawText.length < 500 ? rawText.trim() : undefined);
     if (message) {
       return message as T;
     }
-    throw new Error(res.ok ? "Stored procedure call failed." : `Stored procedure call failed (${res.status}).`);
+    throw new Error(
+      res.ok
+        ? "Stored procedure call failed."
+        : `Stored procedure call failed (${res.status}).`,
+    );
   }
 
   if (!body || body.result === undefined || body.result === null) {

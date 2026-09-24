@@ -1,6 +1,7 @@
 "use client";
 
 import { AppSelectPicker } from "@/app/components/common/AppSelectPicker";
+import SwitchToggle from "@/app/components/common/SwitchToggle";
 import {
   cardClass,
   dangerIconButtonClass,
@@ -10,29 +11,10 @@ import {
   sectionLabelClass,
   subCardClass,
 } from "@/app/components/common/ui";
-import { emptyTemplateSection, type TemplateDraft } from "@/app/lib/exams/schema";
-import { useMemo, useRef, type ReactNode } from "react";
-import { FiPlus, FiTrash2 } from "react-icons/fi";
-
-// A small on/off pill — negative marking is optional per section, off by
-// default so a fresh section doesn't imply a penalty the admin never chose.
-function NegativeMarkingToggle({ checked, onChange }: { checked: boolean; onChange: (next: boolean) => void }) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      onClick={() => onChange(!checked)}
-      className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${checked ? "bg-zinc-900" : "bg-zinc-200"
-        }`}
-    >
-      <span
-        className={`absolute left-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${checked ? "translate-x-4" : "translate-x-0"
-          }`}
-      />
-    </button>
-  );
-}
+import ExamBehaviourModal from "@/app/components/exams/ExamBehaviourModal";
+import { emptyTemplateSection, totalDurationMin, type TemplateDraft } from "@/app/lib/exams/schema";
+import { useMemo, useRef, useState, type ReactNode } from "react";
+import { FiPlus, FiSettings, FiTrash2 } from "react-icons/fi";
 
 // Shared "design an exam's shape" fields — test kind, timing/marking, and a
 // freely add/remove-able section list. Used by both the exam-creation page
@@ -77,6 +59,10 @@ export default function ShapeDesignerFields({
   // Remembers each section's last non-zero negative value so switching the
   // toggle off then back on restores it instead of resetting to a default.
   const lastNegativeRef = useRef<Record<string, number>>({});
+  const [behaviourOpen, setBehaviourOpen] = useState(false);
+  // How many behaviour switches are on — shown on the Settings button so a
+  // non-default choice is visible without opening the modal.
+  const activeSettingsCount = Number(draft.sequentialSections) + Number(draft.allowResume);
 
   const testKindOptions = useMemo(
     () => testKinds.map((k) => ({ label: `${k.name} (${k.code})`, value: k.code })),
@@ -86,7 +72,15 @@ export default function ShapeDesignerFields({
   const totals = useMemo(() => {
     const totalQuestions = draft.sections.reduce((sum, s) => sum + (Number(s.questions) || 0), 0);
     const totalMarks = draft.sections.reduce((sum, s) => sum + (Number(s.questions) || 0) * (Number(s.marks) || 0), 0);
-    return { totalQuestions, totalMarks, sectionCount: draft.sections.length };
+    // Breaks are between sections, so the last section's is never taken.
+    const totalBreakMin = draft.sections.slice(0, -1).reduce((sum, s) => sum + (Number(s.breakMin) || 0), 0);
+    return {
+      totalQuestions,
+      totalMarks,
+      sectionCount: draft.sections.length,
+      durationMin: totalDurationMin(draft.sections),
+      totalBreakMin,
+    };
   }, [draft.sections]);
 
   function handleTestKindPick(code: string | null) {
@@ -146,14 +140,13 @@ export default function ShapeDesignerFields({
             />
           </div>
           <div className="md:col-span-2">
-            <label className={labelClass}>Duration (min)</label>
-            <input
-              type="number"
-              className={inputClass}
-              value={draft.durationMin}
-              onChange={(e) => setDraft({ ...draft, durationMin: Number(e.target.value) })}
-              disabled={disabled}
-            />
+            <label className={labelClass}>Total of each section time (min)</label>
+            {/* Derived from the sections' own times below — never typed in. */}
+            <p
+              className="mt-2 font-bold text-slate-900"
+              tabIndex={-1}
+              title="Sum of every section's time"
+            >{totals.durationMin}</p>
           </div>
           {statusSlot && (
             <div className="md:col-span-2">
@@ -180,8 +173,33 @@ export default function ShapeDesignerFields({
           <span>
             <span className="font-medium text-zinc-700">{totals.totalMarks}</span> marks
           </span>
+          <span>
+            <span className="font-medium text-zinc-700">{totals.durationMin}</span> min
+            {totals.totalBreakMin > 0 && <> + {totals.totalBreakMin} min break</>}
+          </span>
+          <button
+            type="button"
+            className={`${iconTextButtonClass} ml-auto`}
+            onClick={() => setBehaviourOpen(true)}
+            title="Exam behaviour settings"
+          >
+            <FiSettings size={13} /> Settings
+            {activeSettingsCount > 0 && (
+              <span className="ml-1 rounded-full bg-zinc-900 px-1.5 text-[10px] font-semibold leading-4 text-white">
+                {activeSettingsCount}
+              </span>
+            )}
+          </button>
         </div>
       </div>
+
+      <ExamBehaviourModal
+        open={behaviourOpen}
+        onClose={() => setBehaviourOpen(false)}
+        settings={{ sequentialSections: draft.sequentialSections, allowResume: draft.allowResume }}
+        onChange={(patch) => setDraft((d) => ({ ...d, ...patch }))}
+        disabled={disabled}
+      />
 
       {showInstructions && (
         <div className={cardClass}>
@@ -205,7 +223,9 @@ export default function ShapeDesignerFields({
         <div className="mb-3 flex items-center justify-between">
           <div>
             <div className={sectionLabelClass}>Sections</div>
-            <p className="text-xs text-zinc-400">Each section has a pool of questions and how many of those are mandatory to attempt.</p>
+            <p className="text-xs text-zinc-400">
+              Each section has its own time limit, a pool of questions and how many of those are mandatory to attempt.
+            </p>
           </div>
           <button type="button" className={iconTextButtonClass} onClick={addSection}>
             <FiPlus size={13} /> Add section
@@ -230,7 +250,7 @@ export default function ShapeDesignerFields({
                   </button>
                 </div>
                 <div className="flex flex-wrap gap-3">
-                  <div className="w-full sm:w-1/2">
+                  <div className="w-full sm:w-1/3">
                     <label className={labelClass}>Section name</label>
                     <input
                       className={inputClass}
@@ -276,6 +296,32 @@ export default function ShapeDesignerFields({
                         onChange={(e) => updateSection(s.clientId, { mandatory: Number(e.target.value) })}
                       />
                     </div>
+                    <div className="w-24">
+                      <label className={labelClass}>Time (min)</label>
+                      <input
+                        type="number"
+                        min={1}
+                        className={inputClass}
+                        value={s.durationMin}
+                        onChange={(e) => updateSection(s.clientId, { durationMin: Number(e.target.value) })}
+                        disabled={disabled}
+                      />
+                    </div>
+                    {idx < draft.sections.length - 1 && (
+                      <div className="w-28">
+                        <label className={labelClass} title="Optional pause given to the student after this section">
+                          Break after (min)
+                        </label>
+                        <input
+                          type="number"
+                          min={0}
+                          className={inputClass}
+                          value={s.breakMin}
+                          onChange={(e) => updateSection(s.clientId, { breakMin: Number(e.target.value) })}
+                          disabled={disabled}
+                        />
+                      </div>
+                    )}
                     <div className="w-20">
                       <label className={labelClass}>Marks</label>
                       <input
@@ -286,7 +332,7 @@ export default function ShapeDesignerFields({
                       />
                     </div>
                     <div className="flex items-center gap-2 pb-1.5">
-                      <NegativeMarkingToggle checked={hasNegative} onChange={() => toggleNegative(s.clientId, s.negative)} />
+                      <SwitchToggle checked={hasNegative} onChange={() => toggleNegative(s.clientId, s.negative)} />
                       <span className="whitespace-nowrap text-xs font-medium text-zinc-600">Negative</span>
                     </div>
                     {hasNegative && (

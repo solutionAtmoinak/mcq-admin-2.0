@@ -9,6 +9,28 @@
 
 export type SectionMarking = { marks: number; negative: number };
 
+// Exam-wide behaviour flags — stored on MockTest.SettingsJson (and, for
+// templates, BlueprintFilterJson.settings). Defaults are the "no restriction"
+// values so exams/templates saved before these existed behave as they did.
+export type ExamSettings = {
+  // Student must submit a section before the next one unlocks.
+  sequentialSections: boolean;
+  // Student's saved answers persist and the attempt can be resumed later.
+  allowResume: boolean;
+};
+
+export const DEFAULT_EXAM_SETTINGS: ExamSettings = { sequentialSections: false, allowResume: false };
+
+export function parseExamSettings(raw: unknown): ExamSettings {
+  const obj = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  // SQL Server's JSON_MODIFY can hand a BIT back as 1/0 rather than true/false.
+  const flag = (v: unknown) => v === true || v === 1;
+  return {
+    sequentialSections: flag(obj.sequentialSections),
+    allowResume: flag(obj.allowResume),
+  };
+}
+
 export type BlueprintFilterJson = {
   version: 1;
   // Optional because templates saved before this field existed (e.g.
@@ -41,8 +63,16 @@ export type BlueprintFilterJson = {
       mandatory: number;
       marks: number;
       negative: number;
+      // Optional because templates saved before per-section timing existed
+      // only carry examPaper.DurationMin — see splitLegacyDuration.
+      durationMin?: number;
+      // Break given to the student AFTER this section (ignored on the last
+      // one). 0 / absent = no break.
+      breakMin?: number;
     };
   }[];
+  // Absent on templates saved before these settings existed.
+  settings?: ExamSettings;
   summary?: {
     totalQuestions: number;
     totalMarks: number;
@@ -81,15 +111,20 @@ export type TemplateSectionDraft = {
   mandatory: number;
   marks: number;
   negative: number;
+  durationMin: number;
+  // Break after this section, in minutes (0 = none). Not counted in the
+  // exam's duration and ignored for the last section.
+  breakMin: number;
 };
 
 export type TemplateDraft = {
   name: string;
   testKindCode: string;
   testKindName: string;
-  durationMin: number;
   markingSchemeName: string;
   sections: TemplateSectionDraft[];
+  sequentialSections: boolean;
+  allowResume: boolean;
   // Shown to the student in a T&C-style modal before they enter the exam
   // (see MockTest.Instructions) — lives only on the materialized MockTest,
   // never on a BlueprintTemplate, so it's not part of BlueprintFilterJson.
@@ -99,7 +134,17 @@ export type TemplateDraft = {
 export function emptyTemplateSection(): TemplateSectionDraft {
   // negative defaults to 0 — negative marking is opt-in per section (see
   // ShapeDesignerFields' NegativeMarkingToggle), not assumed on.
-  return { clientId: nextClientId(), name: "", questionType: "mcq", questions: 0, mandatory: 0, marks: 4, negative: 0 };
+  return {
+    clientId: nextClientId(),
+    name: "",
+    questionType: "mcq",
+    questions: 0,
+    mandatory: 0,
+    marks: 4,
+    negative: 0,
+    durationMin: 60,
+    breakMin: 0,
+  };
 }
 
 export function emptyTemplateDraft(): TemplateDraft {
@@ -107,27 +152,51 @@ export function emptyTemplateDraft(): TemplateDraft {
     name: "",
     testKindCode: "mock_test",
     testKindName: "Mock Test",
-    durationMin: 180,
     markingSchemeName: "Standard Marking",
     sections: [emptyTemplateSection()],
+    ...DEFAULT_EXAM_SETTINGS,
     instructions: "",
   };
+}
+
+// The exam's duration is always the sum of its sections' own times (breaks
+// are separate and not counted) — never entered on its own.
+export function totalDurationMin(sections: { durationMin: number }[]): number {
+  return sections.reduce((sum, s) => sum + (Number(s.durationMin) || 0), 0);
+}
+
+// Templates/exams saved before per-section timing only have one total
+// duration. Splits it across the sections in proportion to their question
+// count (any rounding remainder goes to the last section) so the total is
+// preserved exactly when such a shape is opened in the designer.
+export function splitLegacyDuration(totalMin: number, sections: { questions: number }[]): number[] {
+  if (!sections.length) return [];
+  const totalQuestions = sections.reduce((sum, s) => sum + s.questions, 0);
+  const shares = sections.map((s) =>
+    Math.floor(totalQuestions > 0 ? (totalMin * s.questions) / totalQuestions : totalMin / sections.length),
+  );
+  shares[shares.length - 1] += totalMin - shares.reduce((sum, m) => sum + m, 0);
+  return shares;
 }
 
 // "Copy from template" — prefills the designer from an existing template's
 // FilterJson. Name is left blank (a copy needs its own name); everything
 // else carries over so the user only has to adjust what's different.
 export function filterJsonToTemplateDraft(filterJson: BlueprintFilterJson): TemplateDraft {
+  const legacyDurations = splitLegacyDuration(
+    filterJson.examPaper.DurationMin,
+    filterJson.paperSections.map((s) => ({ questions: s.RulesJson.questions })),
+  );
   return {
     name: "",
     testKindCode: filterJson.testKind?.code ?? "mock_test",
     testKindName: filterJson.testKind?.name ?? "Mock Test",
-    durationMin: filterJson.examPaper.DurationMin,
     markingSchemeName: filterJson.markingScheme.Name,
+    ...parseExamSettings(filterJson.settings),
     // Instructions live only on the materialized MockTest, never on the
     // template itself — starting from a template always begins blank.
     instructions: "",
-    sections: filterJson.paperSections.map((s) => ({
+    sections: filterJson.paperSections.map((s, i) => ({
       clientId: nextClientId(),
       name: s.Name,
       questionType: s.RulesJson.questionType,
@@ -135,6 +204,8 @@ export function filterJsonToTemplateDraft(filterJson: BlueprintFilterJson): Temp
       mandatory: s.RulesJson.mandatory,
       marks: s.RulesJson.marks,
       negative: s.RulesJson.negative,
+      durationMin: s.RulesJson.durationMin ?? legacyDurations[i],
+      breakMin: s.RulesJson.breakMin ?? 0,
     })),
   };
 }
@@ -149,9 +220,12 @@ export function buildTemplateDraftFromExam(input: {
   examName: string;
   testKindCode: string;
   testKindName: string;
+  // ExamPaper.DurationMin — only used to back-fill sections saved before
+  // per-section timing existed (see splitLegacyDuration).
   durationMin: number;
   markingSchemeName: string;
   instructions: string;
+  settings: ExamSettings;
   sections: {
     sectionId: string;
     name: string;
@@ -160,16 +234,19 @@ export function buildTemplateDraftFromExam(input: {
     mandatory: number;
     marks: number;
     negative: number;
+    durationMin?: number;
+    breakMin?: number;
   }[];
 }): TemplateDraft {
+  const legacyDurations = splitLegacyDuration(input.durationMin, input.sections);
   return {
     name: input.examName,
     testKindCode: input.testKindCode,
     testKindName: input.testKindName,
-    durationMin: input.durationMin,
     markingSchemeName: input.markingSchemeName,
     instructions: input.instructions,
-    sections: input.sections.map((s) => ({
+    ...input.settings,
+    sections: input.sections.map((s, i) => ({
       clientId: nextClientId(),
       sectionId: s.sectionId,
       name: s.name,
@@ -178,6 +255,8 @@ export function buildTemplateDraftFromExam(input: {
       mandatory: s.mandatory,
       marks: s.marks,
       negative: s.negative,
+      durationMin: s.durationMin ?? legacyDurations[i],
+      breakMin: s.breakMin ?? 0,
     })),
   };
 }
@@ -196,7 +275,6 @@ export function codeSlug(input: string): string {
 // page (which has its own separate "exam name" field instead of draft.name).
 export function validateShapeDraft(draft: TemplateDraft): string | null {
   if (!draft.testKindCode.trim()) return "Please pick or name a test kind.";
-  if (draft.durationMin <= 0) return "Duration must be greater than 0 minutes.";
   if (!draft.sections.length) return "Add at least one section.";
   for (const s of draft.sections) {
     if (!s.name.trim()) return "Every section needs a name.";
@@ -208,6 +286,12 @@ export function validateShapeDraft(draft: TemplateDraft): string | null {
     }
     if (s.marks <= 0) return `${s.name}: marks per question must be greater than 0.`;
     if (s.negative < 0) return `${s.name}: negative marks can't be below 0.`;
+    if (!Number.isInteger(s.durationMin) || s.durationMin <= 0) {
+      return `${s.name}: time must be a whole number of minutes greater than 0.`;
+    }
+    if (!Number.isInteger(s.breakMin) || s.breakMin < 0) {
+      return `${s.name}: break must be a whole number of minutes, 0 or more.`;
+    }
   }
   return null;
 }
@@ -223,6 +307,7 @@ export function validateTemplateDraft(draft: TemplateDraft): string | null {
 export function buildFilterJsonFromDraft(draft: TemplateDraft): BlueprintFilterJson {
   const totalQuestions = draft.sections.reduce((sum, s) => sum + s.questions, 0);
   const totalMarks = draft.sections.reduce((sum, s) => sum + s.questions * s.marks, 0);
+  const durationMin = totalDurationMin(draft.sections);
   const bySectionType: Record<string, SectionMarking> = {};
   for (const s of draft.sections) {
     bySectionType[s.questionType] = { marks: s.marks, negative: s.negative };
@@ -244,7 +329,7 @@ export function buildFilterJsonFromDraft(draft: TemplateDraft): BlueprintFilterJ
       Code: codeSlug(draft.name),
       Name: draft.name.trim(),
       TotalMarks: totalMarks,
-      DurationMin: draft.durationMin,
+      DurationMin: durationMin,
       IsQualifying: false,
       DefaultLocale: "en",
     },
@@ -257,12 +342,15 @@ export function buildFilterJsonFromDraft(draft: TemplateDraft): BlueprintFilterJ
         mandatory: s.mandatory,
         marks: s.marks,
         negative: s.negative,
+        durationMin: s.durationMin,
+        breakMin: s.breakMin,
       },
     })),
+    settings: { sequentialSections: draft.sequentialSections, allowResume: draft.allowResume },
     summary: {
       totalQuestions,
       totalMarks,
-      durationMin: draft.durationMin,
+      durationMin,
       subjects: draft.sections.map((s) => ({
         name: s.name.trim(),
         mcq: s.questionType === "mcq" ? s.questions : 0,

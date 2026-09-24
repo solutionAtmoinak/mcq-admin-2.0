@@ -1,108 +1,115 @@
--- dbo.spMcqTeacherService (database: DBDTHMCQPRO) — the admin/teacher-side
--- counterpart to student-portal/sql/spMcqStudentService.sql, called the same
--- way, through the .NET backend's generic executor, never a direct DB
--- connection from mcq-admin:
---   POST {API_ENDPOINT_URL}/AuthDataGet/DExecuteJson/8/spMcqTeacherService/<mode>
---   Authorization: Bearer <admin JWT>
---   body: JSON.stringify(<params object, becomes @json>)
--- See mcq-admin/app/lib/db/teacherService.ts's callTeacherService for the
--- caller and the {isSuccess, errorMessages, statusCode, result} /
--- {ID, statuscode, response} unwrapping contract (identical to
--- studentService.ts's callStudentService).
---
--- Modes 1-2 already exist on the deployed procedure (created outside this
--- repo) — their bodies aren't reproduced here. This file documents ONLY the
--- Mode 3 addition below. Whoever applies this: merge the DECLARE block
--- into the procedure's single existing top-level DECLARE list (dedupe any
--- names already declared there — @Page/@PageSize/@Total are new, safe to
--- add as-is unless already taken), and insert the `IF (@Mode = 3)` block
--- alongside the existing mode blocks. Per explicit convention for this
--- procedure (unlike spMcqStudentService's per-mode-suffixed variables):
--- every variable is declared ONCE at the top, in one shared list, and
--- reused by name across modes rather than re-declared with a per-mode
--- suffix — a later mode that also needs a page/pageSize or a resolved
--- EXAM_STATUS value should reuse @Page/@PageSize/@PublishedStatus here
--- rather than declaring new ones.
---
--- Mode 3: Exam list — admin's "Design Exam" page
--- (app/exam-designer/page.tsx via app/lib/exams/data.ts's listMockTests).
--- @json: {"Page": <int>, "PageSize": <int>} (both optional — default to
--- page 1 / 20 rows). Franchise-scoped via @FranchiseId, which the .NET
--- executor resolves from the signed-in admin's JWT itself — never sent by
--- the client, same as @UserId. Excludes IsPersonalized = 1 rows: those are
--- student-generated (student-portal's spMcqStudentService Mode 7 —
--- Personalized Mock Test generation) — real MockTest rows, but never
--- admin-authored, so they don't belong in the admin's own exam list; a
--- student reaches theirs directly at its own URL, never through here. This
--- replaces the old Prisma listMockTests, which did the same
--- ExamPaper/TestKind join, the same TestQuestion (IsDeleted = 0) count per
--- exam grouped in one query, the same active-only (IsDeleted = 0)
--- MockTestPackage links, and the same CreatedOn DESC ordering — ported
--- here as-is, just with OFFSET/FETCH paging instead of Prisma's skip/take.
--- StatusLabel resolves the EXAM_STATUS _InternalService row inline
--- (ServiceValue matched against MockTest.Status) instead of the app making
--- a second getServiceOptions() round trip after the list query.
---
--- ALTER PROCEDURE [dbo].[spMcqTeacherService]
---     @Mode int = 0,
---     @IP VARCHAR(20) = NULL,
---     @UserId NVARCHAR(450) = NULL,
---     @FranchiseId int = 0,
---     @json NVARCHAR(MAX) = NULL,
---     @output NVARCHAR(MAX) OUTPUT
--- AS
--- BEGIN
--- BEGIN TRY
--- BEGIN TRANSACTION
---
--- BEGIN
--- DECLARE  -- NOTE: table variables can't share this comma-list with scalars
--- (SQL Server rejects it — "Incorrect syntax near the keyword 'TABLE'",
--- confirmed live) — each @Xxx TABLE(...) below needs its own standalone
--- DECLARE statement, separate from this scalar block.
---     @Page INT, @PageSize INT, @Total INT, @Category NVARCHAR(250),
---     @ItemsJson NVARCHAR(MAX), -- Mode 7's 65535-char JSON_QUERY-nesting fix; new, needs merging in.
---     @SevenDaysAgo DATETIME, @StartOfDay DATETIME,
---     @Q NVARCHAR(4000), @QPattern NVARCHAR(MAX), @TypeId INT, @Difficulty TINYINT, @Status INT,
---     @LotIdText NVARCHAR(50), @LotId BIGINT, @HasLotFilter BIT,
---     @TagKeysCsv NVARCHAR(MAX), @TagValuesCsv NVARCHAR(MAX), @HasTagKeys BIT, @HasTagValues BIT,
---     @ExcludeIdsCsv NVARCHAR(MAX), @HasExcludeIds BIT, @Limit INT, @QuestionId BIGINT,
---     @LotNo VARCHAR(50), @LotNoAttempts INT, @ApprovedStatus INT,
---     @RowNo INT, @MaxRowNo INT, @CurCode NVARCHAR(50), @CurTypeCode VARCHAR(50), @CurTypeId INT,
---     @CurDifficulty TINYINT, @CurStatus INT, @CurEstSolveSec SMALLINT, @CurPresentationJson NVARCHAR(MAX),
---     @CurAnswerJson NVARCHAR(MAX), @CurSearchText NVARCHAR(MAX), @CurTagsJson NVARCHAR(MAX),
---     @NewQuestionId BIGINT, @NewVersionId BIGINT, @ContentHash CHAR(64), @CodeAttempts INT,
---     @TagRowNo INT, @TagMaxRowNo INT, @TagKey NVARCHAR(200), @TagValue NVARCHAR(200),
---     @DimensionId INT, @DimCode VARCHAR(50), @TagId BIGINT,
---     @NextVersionNo INT, @ChangeNote NVARCHAR(400),
---     @ToStatus INT, @Comment NVARCHAR(MAX), @ExistingStatus INT, @ExistingVersionId BIGINT, @QuestionsJson NVARCHAR(MAX),
---     @QInput TABLE (RowNo INT IDENTITY(1,1), Code NVARCHAR(50), TypeCode VARCHAR(50), Difficulty TINYINT,
---         Status INT, EstSolveSec SMALLINT, PresentationJson NVARCHAR(MAX), AnswerJson NVARCHAR(MAX),
---         SearchText NVARCHAR(MAX), TagsJson NVARCHAR(MAX)),
---     @TagInput TABLE (RowNo INT IDENTITY(1,1), TagKey NVARCHAR(200), TagValue NVARCHAR(200)),
---     @CreatedOutput TABLE (Code VARCHAR(50), QuestionId BIGINT),
---     @NewId TABLE (Id BIGINT),
---     @TemplateId BIGINT, @PaperId BIGINT, @MockTestId BIGINT,
---     @PublishedStatus INT, @DraftStatus INT, @DraftStatus2 INT, @SecNegative DECIMAL(5,2),
---     @BodyId BIGINT, @ProgramId BIGINT, @StageId BIGINT,
---     @TestKindId INT, @TestKindCode VARCHAR(40), @TestKindName NVARCHAR(100),
---     @ExamFilterJson NVARCHAR(MAX), @TemplateName NVARCHAR(200), @TemplateFilterJson NVARCHAR(MAX),
---     @InitialStatus INT, @Instructions NVARCHAR(MAX),
---     @MsName NVARCHAR(150), @MsRulesJson NVARCHAR(MAX),
---     @PaperName NVARCHAR(200), @PaperCode VARCHAR(30), @PaperTotalMarks DECIMAL(6,2),
---     @PaperDurationMin INT, @PaperIsQualifying BIT, @PaperDefaultLocale VARCHAR(10),
---     @SchemeId BIGINT, @MtCode VARCHAR(50), @MtCodeAttempts INT,
---     @SelectionPolicyJson NVARCHAR(MAX), @SettingsJson NVARCHAR(MAX), @SectionsJson NVARCHAR(MAX), @SettingsInJson NVARCHAR(MAX), @TemplateIdStr VARCHAR(20), @PriorTemplateId VARCHAR(20),
---     @SecName NVARCHAR(100), @SecSeqNo INT, @SecRulesJson NVARCHAR(MAX), @SecSectionIdText VARCHAR(20),
---     @SecSectionId BIGINT, @MatchesExisting BIT, @NewPool INT,
---     @OverCapacityResolution VARCHAR(10), @ExamName NVARCHAR(200),
---     @MarkingSchemeName NVARCHAR(150), @TotalMarks DECIMAL(6,2), @DurationMin INT,
---     @ToStatus2 INT, @PackagesCsv NVARCHAR(MAX), @PackageId BIGINT,
---     @SectionInput TABLE (RowNo INT IDENTITY(1,1), SectionIdText VARCHAR(20), SeqNo INT, Name NVARCHAR(100), RulesJson NVARCHAR(MAX)),
---     @CurSections TABLE (SectionId BIGINT, SeqNo INT, Kept BIT DEFAULT 0),
---     @QuestionIdsCsv NVARCHAR(MAX), @QuestionIdsInput TABLE (RowNo INT IDENTITY(1,1), QuestionId BIGINT),
---     @OrderedIdsInput TABLE (RowNo INT IDENTITY(1,1), QuestionId BIGINT)
---     -- ...plus whatever modes 1-2 already declare; merge into this one list.
+USE [DBDTHMCQPRO]
+GO
+/****** Object:  StoredProcedure [dbo].[spMcqTeacherService] ******/
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+-- =============================================
+-- Author:		<Author, DbTeam>
+-- Create date: <Create Date, 2024-03-10 13:09:25.567>
+-- Description:	<Description, storage purpose>
+-- Modes 3-32 added by Claude Code (mcq-admin Prisma-removal migration);
+-- Mode 33 added for the one-off TblMasterMCQ4Question bulk migration —
+-- see mcq-admin/sql/spMcqTeacherService.sql in the repo for per-mode docs.
+-- =============================================
+
+ALTER PROCEDURE [dbo].[spMcqTeacherService]
+    @Mode int = 0,
+	@IP VARCHAR(20) = NULL,
+	@UserId NVARCHAR(450) = NULL,
+	@FranchiseId int = 0,
+	@json NVARCHAR(MAX) = NULL,
+    @output Nvarchar(max) OUTPUT
+AS
+BEGIN
+BEGIN TRY
+BEGIN TRANSACTION
+
+
+BEGIN
+DECLARE
+    @Page INT, @PageSize INT, @Total INT, @Category NVARCHAR(250),
+    @SevenDaysAgo DATETIME, @StartOfDay DATETIME,
+    @Q NVARCHAR(4000), @QPattern NVARCHAR(MAX), @TypeId INT, @Difficulty TINYINT, @Status INT,
+    @LotIdText NVARCHAR(50), @LotId BIGINT, @HasLotFilter BIT,
+    @TagKeysCsv NVARCHAR(MAX), @TagValuesCsv NVARCHAR(MAX), @HasTagKeys BIT, @HasTagValues BIT,
+    @ExcludeIdsCsv NVARCHAR(MAX), @HasExcludeIds BIT, @Limit INT, @QuestionId BIGINT,
+    @LotNo VARCHAR(50), @LotNoAttempts INT, @ApprovedStatus INT,
+    @RowNo INT, @MaxRowNo INT, @CurCode NVARCHAR(50), @CurTypeCode VARCHAR(50), @CurTypeId INT,
+    @CurDifficulty TINYINT, @CurStatus INT, @CurEstSolveSec SMALLINT, @CurPresentationJson NVARCHAR(MAX),
+    @CurAnswerJson NVARCHAR(MAX), @CurSearchText NVARCHAR(MAX), @CurTagsJson NVARCHAR(MAX),
+    @NewQuestionId BIGINT, @NewVersionId BIGINT, @ContentHash CHAR(64), @CodeAttempts INT,
+    @TagRowNo INT, @TagMaxRowNo INT, @TagKey NVARCHAR(200), @TagValue NVARCHAR(200),
+    @DimensionId INT, @DimCode VARCHAR(50), @TagId BIGINT,
+    @NextVersionNo INT, @ChangeNote NVARCHAR(400),
+    @ToStatus INT, @Comment NVARCHAR(MAX), @ExistingStatus INT, @ExistingVersionId BIGINT,
+    @TemplateId BIGINT, @PaperId BIGINT, @MockTestId BIGINT,
+    @PublishedStatus INT, @DraftStatus INT, @DraftStatus2 INT, @SecNegative DECIMAL(5,2),
+    @BodyId BIGINT, @ProgramId BIGINT, @StageId BIGINT,
+    @TestKindId INT, @TestKindCode VARCHAR(40), @TestKindName NVARCHAR(100),
+    @ExamFilterJson NVARCHAR(MAX), @TemplateName NVARCHAR(200), @TemplateFilterJson NVARCHAR(MAX),
+    @InitialStatus INT, @Instructions NVARCHAR(MAX),
+    @MsName NVARCHAR(150), @MsRulesJson NVARCHAR(MAX),
+    @PaperName NVARCHAR(200), @PaperCode VARCHAR(30), @PaperTotalMarks DECIMAL(6,2),
+    @PaperDurationMin INT, @PaperIsQualifying BIT, @PaperDefaultLocale VARCHAR(10),
+    @SchemeId BIGINT, @MtCode VARCHAR(50), @MtCodeAttempts INT,
+    @SelectionPolicyJson NVARCHAR(MAX), @SettingsJson NVARCHAR(MAX), @SectionsJson NVARCHAR(MAX), @SettingsInJson NVARCHAR(MAX), @TemplateIdStr VARCHAR(20), @PriorTemplateId VARCHAR(20),
+    @SecName NVARCHAR(100), @SecSeqNo INT, @SecRulesJson NVARCHAR(MAX), @SecSectionIdText VARCHAR(20),
+    @SecSectionId BIGINT, @MatchesExisting BIT, @NewPool INT,
+    @OverCapacityResolution VARCHAR(10), @ExamName NVARCHAR(200),
+    @MarkingSchemeName NVARCHAR(150), @TotalMarks DECIMAL(6,2), @DurationMin INT,
+    @ToStatus2 INT, @PackagesCsv NVARCHAR(MAX), @PackageId BIGINT,
+    @QuestionIdsCsv NVARCHAR(MAX), @QuestionsJson NVARCHAR(MAX), @ItemsJson NVARCHAR(MAX);
+
+-- T-SQL does not allow a TABLE variable declaration inside the same
+-- comma-separated DECLARE list as scalar variables — each one needs its
+-- own standalone DECLARE statement.
+DECLARE @QInput TABLE (RowNo INT IDENTITY(1,1), Code NVARCHAR(50), TypeCode VARCHAR(50), Difficulty TINYINT, Status INT, EstSolveSec SMALLINT, PresentationJson NVARCHAR(MAX), AnswerJson NVARCHAR(MAX), SearchText NVARCHAR(MAX), TagsJson NVARCHAR(MAX));
+DECLARE @TagInput TABLE (RowNo INT IDENTITY(1,1), TagKey NVARCHAR(200), TagValue NVARCHAR(200));
+DECLARE @CreatedOutput TABLE (Code VARCHAR(50), QuestionId BIGINT);
+DECLARE @NewId TABLE (Id BIGINT);
+DECLARE @SectionInput TABLE (RowNo INT IDENTITY(1,1), SectionIdText VARCHAR(20), SeqNo INT, Name NVARCHAR(100), RulesJson NVARCHAR(MAX));
+DECLARE @CurSections TABLE (SectionId BIGINT, SeqNo INT, Kept BIT DEFAULT 0);
+DECLARE @QuestionIdsInput TABLE (RowNo INT IDENTITY(1,1), QuestionId BIGINT);
+DECLARE @OrderedIdsInput TABLE (RowNo INT IDENTITY(1,1), QuestionId BIGINT);
+
+    -- teacher exam panel url fro admin panel
+    if(@Mode = 1)
+    BEGIN
+        SET @output = (
+            SELECT 1 AS ID,
+            200 AS statuscode,
+            'https://proexam.dthlms.com' AS response
+            FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
+        );
+        COMMIT RETURN;
+    END
+
+    -- all packages with mcq
+    if(@mode =2)
+    BEGIN
+        SET @output = (
+            SELECT 1 AS ID,
+            200 AS statuscode,
+            (
+                SELECT distinct p.PackageId AS [value]
+				,p.PackageName AS [label]
+				FROM DBDTHLMSPro.[dbo].[tblPackage] AS p
+				JOIN DBDTHLMSPro..tblPackageService AS ps ON ps.PackageId = p.PackageId and ps.IsDeleted = 0 and ps.IsActive = 1
+				WHERE p.FranchiseId = @FranchiseId
+					AND p.IsDeleted = 0
+					AND p.IsCombo = 0
+					AND ps.ServiceId = 4 --mcq
+                ORDER by PackageName
+                for json path
+            ) AS response
+            FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
+        );
+        COMMIT RETURN;
+    END
+
+	
 
     if(@Mode = 3)
     BEGIN
@@ -310,19 +317,7 @@ BEGIN
               AND (@HasTagKeys = 0 OR td2.Name IN (SELECT value FROM STRING_SPLIT(@TagKeysCsv, ',')))
           ))
 
-    -- Built as a plain variable assignment, NOT nested inside JSON_QUERY(...)
-    -- FOR JSON PATH like every other mode's @output. SQL Server has a known
-    -- bug (confirmed live, SQL Server 2019): when JSON_QUERY() embeds a
-    -- FOR JSON fragment >= 65,535 characters into an *outer* FOR JSON query,
-    -- the combined output comes back malformed/truncated at that exact
-    -- 65535 boundary ("JSON text is not properly formatted... position
-    -- 65535"). A page of questions (PresentationJson + tags, times
-    -- PageSize) crosses that easily, and the exam-designer question-picker
-    -- asks for a larger PageSize than the plain questions list, so it hits
-    -- this first. A single-level `SET @var = (SELECT ... FOR JSON PATH)`
-    -- assignment to an NVARCHAR(MAX) variable does NOT have this limit, so
-    -- Items is captured that way and stitched into @output by string
-    -- concatenation instead of another layer of FOR JSON nesting.
+
     -- Presentation/TagNames are deliberately NOT wrapped in JSON_QUERY(...)
     -- here (unlike every other mode in this file that embeds question
     -- content) — see the comment above @ItemsJson's SET. Confirmed live:
@@ -1204,13 +1199,8 @@ END
 -- "TestKindName": "...", "MarkingSchemeRulesJson": {...},
 -- "MarkingSchemeName": "...", "TotalMarks": <decimal>, "DurationMin": <int>,
 -- "Instructions": "...", "OverCapacityResolution": "trim" | "manual",
--- "Settings": {"sequentialSections": bool, "allowResume": bool} (merged into
--- MockTest.SettingsJson, other keys kept; Mode 22 gets the same object as
--- ExamFilterJson.settings),
 -- "Sections": [{"SectionId": "<bigint string>" | null, "Name": "...",
--- "RulesJson": {questionType,questions,mandatory,marks,negative,durationMin,breakMin}}],
--- (DurationMin above = sum of the sections' durationMin; breakMin is the
--- break AFTER that section and is not part of DurationMin.)
+-- "RulesJson": {questionType,questions,mandatory,marks,negative}}],
 -- "TemplateName": "..." | null, "TemplateFilterJson": "<JSON text>" | null}.
 -- Only allowed while the exam is Draft. Same two-pass negative-placeholder
 -- reorder trick the old Prisma version used for PaperSection.SeqNo (the
@@ -1925,5 +1915,28 @@ BEGIN
     COMMIT RETURN;
 END
 
--- ...rest of the existing procedure (modes 1-2, END/COMMIT/CATCH block)
--- unchanged.
+END
+COMMIT TRANSACTION
+
+    END TRY
+    BEGIN CATCH
+        ROLLBACK TRANSACTION -- Rollback transaction in case of error
+
+        -- Insert error details into the DatabaseError table
+        -- INSERT INTO DatabaseError (Error_State, Error_Line, ERROR_MESSAGE, ERROR_PROCEDURE, DateOfError, FranchiseId, IpAddress, jsonData, Mode, UserId)
+        -- VALUES (
+        --     ERROR_STATE(),
+        --     ERROR_LINE(),
+        --     ERROR_MESSAGE(),
+        --     ERROR_PROCEDURE(),
+        --     GETDATE(),
+        --     @FranchiseId,
+        --     @IP,
+        --     @json,
+        --     @Mode,
+        --     @UserId
+        -- );
+
+		SET @output = JSON_QUERY((select 0 as ID, 400 as StatusCode, ERROR_MESSAGE() as response FOR JSON PATH, WITHOUT_ARRAY_WRAPPER));
+    END CATCH
+END

@@ -131,6 +131,25 @@ function stemPreviewFrom(presentation: unknown): string {
   return "(no content)";
 }
 
+// Mode 7's SP is meant to return Presentation/TagNames as JSON-text strings
+// rather than embedded JSON (see spMcqTeacherService.sql's Mode 7 comment —
+// JSON_QUERY-embedding them corrupts SQL Server's FOR JSON output once a
+// page's combined content crosses 65,535 characters) — but tolerate an
+// already-embedded object/array too (i.e. a deployed SP still using
+// JSON_QUERY), so this stays correct regardless of exactly which version of
+// the SP is live in a given environment.
+function parseJsonMaybe<T>(value: unknown): T | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value === "string") {
+    try {
+      return JSON.parse(value) as T;
+    } catch {
+      return null;
+    }
+  }
+  return value as T;
+}
+
 type RawQuestionListItem = {
   Id: string;
   Code: string;
@@ -139,7 +158,7 @@ type RawQuestionListItem = {
   Difficulty: number;
   Status: number;
   Presentation: unknown;
-  TagNames: { Name: string }[] | null;
+  TagNames: unknown;
   CreatedOn: string;
   LotNo: string | null;
 };
@@ -166,8 +185,8 @@ export async function listQuestions(
       typeName: q.TypeName,
       difficulty: q.Difficulty,
       status: q.Status,
-      stemPreview: stemPreviewFrom(q.Presentation),
-      tagNames: (q.TagNames ?? []).map((t) => t.Name),
+      stemPreview: stemPreviewFrom(parseJsonMaybe(q.Presentation)),
+      tagNames: (parseJsonMaybe<{ Name: string }[]>(q.TagNames) ?? []).map((t) => t.Name),
       createdOn: q.CreatedOn,
       lotNo: q.LotNo,
     })),

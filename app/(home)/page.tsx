@@ -2,6 +2,7 @@ import { getBankSummary } from "@/app/lib/questions/data";
 import { getServiceOptions } from "@/app/lib/db/serviceConfig";
 import { toLabelRecord } from "@/app/lib/db/serviceOptions";
 import Link from "next/link";
+import { TempMigrateSection566Button } from "./TempMigrateSection566Button";
 
 export const dynamic = "force-dynamic";
 
@@ -36,6 +37,8 @@ export default async function Home() {
           Browse Question Bank
         </Link>
       </div>
+
+      <TempMigrateSection566Button />
 
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
         <StatCard label="Total questions" value={summary.total} />

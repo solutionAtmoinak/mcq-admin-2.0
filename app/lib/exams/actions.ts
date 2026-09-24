@@ -120,9 +120,14 @@ export async function updateMockTestFromDraft(
     TestKindCode: draft.testKindCode.trim(),
     TestKindName: draft.testKindName.trim() || draft.testKindCode.trim(),
     MarkingSchemeName: filterJson.markingScheme.Name,
+    // Must stay a nested object: the SP still deployed in some databases reads
+    // it with OPENJSON ... AS JSON, which returns NULL for a JSON *string*.
+    // (The current SP accepts either form.)
     MarkingSchemeRulesJson: filterJson.markingScheme.RulesJson,
     TotalMarks: filterJson.examPaper.TotalMarks,
+    // Sum of the sections' own times — see totalDurationMin.
     DurationMin: filterJson.examPaper.DurationMin,
+    Settings: { sequentialSections: draft.sequentialSections, allowResume: draft.allowResume },
     Instructions: draft.instructions,
     OverCapacityResolution: overCapacityResolution,
     // Array position is the section's intended order — the SP derives
@@ -137,6 +142,8 @@ export async function updateMockTestFromDraft(
         mandatory: s.mandatory,
         marks: s.marks,
         negative: s.negative,
+        durationMin: s.durationMin,
+        breakMin: s.breakMin,
       },
     })),
     TemplateName: templateName || null,
