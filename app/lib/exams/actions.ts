@@ -14,6 +14,8 @@ import crypto from "node:crypto";
 import {
   buildFilterJsonFromDraft,
   codeSlug,
+  effectiveBreakMin,
+  effectiveExamSettings,
   validateShapeDraft,
   validateTemplateDraft,
   type TemplateDraft,
@@ -127,7 +129,7 @@ export async function updateMockTestFromDraft(
     TotalMarks: filterJson.examPaper.TotalMarks,
     // Sum of the sections' own times — see totalDurationMin.
     DurationMin: filterJson.examPaper.DurationMin,
-    Settings: { sequentialSections: draft.sequentialSections, allowResume: draft.allowResume },
+    Settings: effectiveExamSettings(draft),
     Instructions: draft.instructions,
     OverCapacityResolution: overCapacityResolution,
     // Array position is the section's intended order — the SP derives
@@ -143,7 +145,7 @@ export async function updateMockTestFromDraft(
         marks: s.marks,
         negative: s.negative,
         durationMin: s.durationMin,
-        breakMin: s.breakMin,
+        breakMin: effectiveBreakMin(draft.testKindCode, s.breakMin),
       },
     })),
     TemplateName: templateName || null,

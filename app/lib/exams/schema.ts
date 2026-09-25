@@ -21,6 +21,36 @@ export type ExamSettings = {
 
 export const DEFAULT_EXAM_SETTINGS: ExamSettings = { sequentialSections: false, allowResume: false };
 
+// A "Resumable Exam" (TestKind id 14) is resumable by definition, so its
+// allowResume flag is always on — whatever the draft says.
+export const RESUMABLE_TEST_KIND_CODE = "resumable_exam";
+
+export function isResumableKind(testKindCode: string): boolean {
+  return testKindCode.trim() === RESUMABLE_TEST_KIND_CODE;
+}
+
+// The settings that actually get saved for a draft. A resumable exam is also
+// never section-sequential (sections can't be locked once submitted if the
+// attempt can be paused and resumed) and never has breaks — see
+// effectiveBreakMin.
+export function effectiveExamSettings(draft: {
+  testKindCode: string;
+  sequentialSections: boolean;
+  allowResume: boolean;
+}): ExamSettings {
+  const resumable = isResumableKind(draft.testKindCode);
+  return {
+    sequentialSections: draft.sequentialSections && !resumable,
+    allowResume: draft.allowResume || resumable,
+  };
+}
+
+// The break (minutes) that actually gets saved for a section: always 0 on a
+// resumable exam.
+export function effectiveBreakMin(testKindCode: string, breakMin: number): number {
+  return isResumableKind(testKindCode) ? 0 : breakMin;
+}
+
 export function parseExamSettings(raw: unknown): ExamSettings {
   const obj = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
   // SQL Server's JSON_MODIFY can hand a BIT back as 1/0 rather than true/false.
@@ -343,10 +373,10 @@ export function buildFilterJsonFromDraft(draft: TemplateDraft): BlueprintFilterJ
         marks: s.marks,
         negative: s.negative,
         durationMin: s.durationMin,
-        breakMin: s.breakMin,
+        breakMin: effectiveBreakMin(draft.testKindCode, s.breakMin),
       },
     })),
-    settings: { sequentialSections: draft.sequentialSections, allowResume: draft.allowResume },
+    settings: effectiveExamSettings(draft),
     summary: {
       totalQuestions,
       totalMarks,

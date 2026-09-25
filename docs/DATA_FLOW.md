@@ -69,6 +69,12 @@ table, fetched at runtime:
   enums for attempt/grading states without checking whether they should be
   `_InternalService` rows too, for consistency with how the rest of the app
   resolves "what does 4 mean" at runtime instead of at compile time.
+- **`ATTEMPT_EVENT_TYPE`** (student portal only — no TS reads it): the
+  `AttemptEvent.EventType` codes the resumable exam writes, looked up by the
+  SP itself. `RESUMABLE_POSITION` (20) = the question the student is on (one
+  row per attempt, updated in place), `RESUMABLE_LEFT` (21) = one row per
+  "Save & Leave". Seeded by `student-portal/sql/seed-attempt-event-types.sql`;
+  the SP fails loudly (400 + a `DatabaseError` row) if a row is missing.
 - Badge **colors** (not business meaning) are the one thing still hardcoded,
   in `app/lib/questions/constants.ts` (`QUESTION_STATUS_BADGE`) and
   `app/lib/exams/constants.ts` (`MOCK_TEST_STATUS_BADGE`) — presentation
@@ -150,7 +156,7 @@ Two related but distinct concepts:
 - `MockTest.SettingsJson.sequentialSections` — a section must be submitted before the next unlocks.
 - `MockTest.SettingsJson.allowResume` — student may save answers and resume the attempt later.
 - Exams/templates saved before this have none of these keys: the designer back-fills section times by splitting `DurationMin` in proportion to question count (`splitLegacyDuration` in `schema.ts`), and both flags read as `false`. Templates carry the same values in `FilterJson` (`settings`, per-section `durationMin`/`breakMin`).
-- The admin only *stores* these. Enforcing them (per-section timers, locking, breaks, save/resume) is student-portal work — its current expiry check uses `StartedOn + DurationMin` only.
+- The admin only *stores* these. The student portal's **Normal and Practice** exams now enforce section timers, sequential locking and breaks (`spMcqStudentService` Modes 13–15, state in `AttemptSection` — see the "SECTIONED EXAMS" comment in `student-portal/sql/spMcqStudentService.sql`). `allowResume` is read but **not enforced yet**, and Personalized exams still run on the old single timer (Modes 2/3/9).
 
 **Not touched by admin at all: `TestPool`.** Same shape as `TestQuestion`
 (MockTest/Section/Question/Version + `IsMandatory`) but nothing in

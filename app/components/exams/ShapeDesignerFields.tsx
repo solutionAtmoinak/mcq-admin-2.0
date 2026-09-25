@@ -11,10 +11,17 @@ import {
   sectionLabelClass,
   subCardClass,
 } from "@/app/components/common/ui";
-import ExamBehaviourModal from "@/app/components/exams/ExamBehaviourModal";
-import { emptyTemplateSection, totalDurationMin, type TemplateDraft } from "@/app/lib/exams/schema";
-import { useMemo, useRef, useState, type ReactNode } from "react";
-import { FiPlus, FiSettings, FiTrash2 } from "react-icons/fi";
+import ExamBehaviourFields from "@/app/components/exams/ExamBehaviourFields";
+import {
+  effectiveBreakMin,
+  effectiveExamSettings,
+  emptyTemplateSection,
+  isResumableKind,
+  totalDurationMin,
+  type TemplateDraft,
+} from "@/app/lib/exams/schema";
+import { useMemo, useRef, type ReactNode } from "react";
+import { FiPlus, FiTrash2 } from "react-icons/fi";
 
 // Shared "design an exam's shape" fields — test kind, timing/marking, and a
 // freely add/remove-able section list. Used by both the exam-creation page
@@ -59,10 +66,7 @@ export default function ShapeDesignerFields({
   // Remembers each section's last non-zero negative value so switching the
   // toggle off then back on restores it instead of resetting to a default.
   const lastNegativeRef = useRef<Record<string, number>>({});
-  const [behaviourOpen, setBehaviourOpen] = useState(false);
-  // How many behaviour switches are on — shown on the Settings button so a
-  // non-default choice is visible without opening the modal.
-  const activeSettingsCount = Number(draft.sequentialSections) + Number(draft.allowResume);
+  const resumeLocked = isResumableKind(draft.testKindCode);
 
   const testKindOptions = useMemo(
     () => testKinds.map((k) => ({ label: `${k.name} (${k.code})`, value: k.code })),
@@ -73,7 +77,9 @@ export default function ShapeDesignerFields({
     const totalQuestions = draft.sections.reduce((sum, s) => sum + (Number(s.questions) || 0), 0);
     const totalMarks = draft.sections.reduce((sum, s) => sum + (Number(s.questions) || 0) * (Number(s.marks) || 0), 0);
     // Breaks are between sections, so the last section's is never taken.
-    const totalBreakMin = draft.sections.slice(0, -1).reduce((sum, s) => sum + (Number(s.breakMin) || 0), 0);
+    const totalBreakMin = draft.sections
+      .slice(0, -1)
+      .reduce((sum, s) => sum + (effectiveBreakMin(draft.testKindCode, Number(s.breakMin) || 0)), 0);
     return {
       totalQuestions,
       totalMarks,
@@ -81,12 +87,22 @@ export default function ShapeDesignerFields({
       durationMin: totalDurationMin(draft.sections),
       totalBreakMin,
     };
-  }, [draft.sections]);
+  }, [draft.sections, draft.testKindCode]);
 
   function handleTestKindPick(code: string | null) {
     if (!code) return;
     const kind = testKinds.find((k) => k.code === code);
-    setDraft((d) => ({ ...d, testKindCode: code, testKindName: kind?.name ?? d.testKindName }));
+    setDraft((d) => ({
+      ...d,
+      testKindCode: code,
+      testKindName: kind?.name ?? d.testKindName,
+      // A Resumable Exam is always resumable; keep the draft in step so the flag is on
+      // even if the admin later switches to another kind.
+      allowResume: d.allowResume || isResumableKind(code),
+      // ...and never sequential or with breaks, so clear those on switching to it.
+      sequentialSections: d.sequentialSections && !isResumableKind(code),
+      sections: isResumableKind(code) ? d.sections.map((s) => ({ ...s, breakMin: 0 })) : d.sections,
+    }));
   }
 
   function updateSection(clientId: string, patch: Partial<TemplateDraft["sections"][number]>) {
@@ -177,47 +193,36 @@ export default function ShapeDesignerFields({
             <span className="font-medium text-zinc-700">{totals.durationMin}</span> min
             {totals.totalBreakMin > 0 && <> + {totals.totalBreakMin} min break</>}
           </span>
-          <button
-            type="button"
-            className={`${iconTextButtonClass} ml-auto`}
-            onClick={() => setBehaviourOpen(true)}
-            title="Exam behaviour settings"
-          >
-            <FiSettings size={13} /> Settings
-            {activeSettingsCount > 0 && (
-              <span className="ml-1 rounded-full bg-zinc-900 px-1.5 text-[10px] font-semibold leading-4 text-white">
-                {activeSettingsCount}
-              </span>
-            )}
-          </button>
         </div>
       </div>
 
-      <ExamBehaviourModal
-        open={behaviourOpen}
-        onClose={() => setBehaviourOpen(false)}
-        settings={{ sequentialSections: draft.sequentialSections, allowResume: draft.allowResume }}
-        onChange={(patch) => setDraft((d) => ({ ...d, ...patch }))}
-        disabled={disabled}
-      />
-
-      {showInstructions && (
-        <div className={cardClass}>
-          <div>
-            <div className={sectionLabelClass}>Instructions</div>
-            <p className="text-xs text-zinc-400">
-              Shown to the student before they enter this exam. Leave blank to skip.
-            </p>
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        {showInstructions && (
+          <div className={`${cardClass} lg:col-span-2`}>
+            <div>
+              <div className={sectionLabelClass}>Instructions</div>
+              <p className="text-xs text-zinc-400">
+                Shown to the student before they enter this exam. Leave blank to skip.
+              </p>
+            </div>
+            <textarea
+              className={`${inputClass} mt-2 h-28`}
+              value={draft.instructions}
+              onChange={(e) => setDraft({ ...draft, instructions: e.target.value })}
+              placeholder="e.g. This exam has 3 sections. Once started, the timer cannot be paused... etc. (Can uses raw html format)"
+              disabled={disabled}
+            />
           </div>
-          <textarea
-            className={`${inputClass} mt-2 h-28`}
-            value={draft.instructions}
-            onChange={(e) => setDraft({ ...draft, instructions: e.target.value })}
-            placeholder="e.g. This exam has 3 sections. Once started, the timer cannot be paused... etc. (Can uses raw html format)"
+        )}
+        <div className={`${cardClass} ${showInstructions ? "lg:col-span-1" : "lg:col-span-3"}`}>
+          <ExamBehaviourFields
+            settings={effectiveExamSettings(draft)}
+            onChange={(patch) => setDraft((d) => ({ ...d, ...patch }))}
             disabled={disabled}
+            resumeLocked={resumeLocked}
           />
         </div>
-      )}
+      </div>
 
       <div className={cardClass}>
         <div className="mb-3 flex items-center justify-between">
@@ -226,6 +231,11 @@ export default function ShapeDesignerFields({
             <p className="text-xs text-zinc-400">
               Each section has its own time limit, a pool of questions and how many of those are mandatory to attempt.
             </p>
+            {resumeLocked && (
+              <p className="mt-1 text-xs font-medium text-amber-600">
+                Note: there is no section-wise timing for a resumable exam — it works on the total time only.
+              </p>
+            )}
           </div>
           <button type="button" className={iconTextButtonClass} onClick={addSection}>
             <FiPlus size={13} /> Add section
@@ -307,7 +317,7 @@ export default function ShapeDesignerFields({
                         disabled={disabled}
                       />
                     </div>
-                    {idx < draft.sections.length - 1 && (
+                    {!resumeLocked && idx < draft.sections.length - 1 && (
                       <div className="w-28">
                         <label className={labelClass} title="Optional pause given to the student after this section">
                           Break after (min)
