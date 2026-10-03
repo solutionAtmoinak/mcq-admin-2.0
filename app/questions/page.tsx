@@ -3,9 +3,10 @@ import QuestionStemCell from "@/app/components/questions/QuestionStemCell";
 import { FilterSelectPicker } from "@/app/components/common/FilterSelectPicker";
 import QuestionStatusBadge from "@/app/components/questions/QuestionStatusBadge";
 import { DataTable } from "@/app/components/table/DataTable";
+import { LotFilterPicker } from "@/app/components/questions/LotFilterPicker";
 import { TagFilterPicker } from "@/app/components/questions/TagFilterPicker";
 import { PAGE_SIZE_OPTIONS } from "@/app/lib/shared/constants";
-import { getReferenceData, listQuestions } from "@/app/lib/questions/data";
+import { getReferenceData, listQuestionLots, listQuestions } from "@/app/lib/questions/data";
 import { QUESTION_TYPE_LABELS, type QuestionTypeCode } from "@/app/lib/questions/schema";
 import { toLabelRecord } from "@/app/lib/db/serviceOptions";
 import Link from "next/link";
@@ -23,6 +24,7 @@ type SearchParams = {
   tagKey?: string | string[];
   tagValue?: string | string[];
   status?: string;
+  lotId?: string | string[];
   page?: string;
   pageSize?: string;
 };
@@ -38,7 +40,7 @@ export default async function QuestionsPage({
   searchParams: Promise<SearchParams>;
 }) {
   const params = await searchParams;
-  const referenceData = await getReferenceData();
+  const [referenceData, lots] = await Promise.all([getReferenceData(), listQuestionLots()]);
   const difficultyLabels = toLabelRecord(referenceData.difficultyOptions);
 
   const typeId = params.type ? Number(params.type) : undefined;
@@ -51,6 +53,7 @@ export default async function QuestionsPage({
     : DEFAULT_PAGE_SIZE;
   const tagKeys = toArray(params.tagKey).map((s) => s.trim()).filter(Boolean);
   const tagValues = toArray(params.tagValue).map((s) => s.trim()).filter(Boolean);
+  const lotIds = toArray(params.lotId).map((s) => s.trim()).filter(Boolean);
 
   const { items, total } = await listQuestions({
     q: params.q?.trim() || undefined,
@@ -58,6 +61,7 @@ export default async function QuestionsPage({
     difficulty,
     tagKeys,
     tagValues,
+    lotIds,
     status,
     page,
     pageSize,
@@ -105,6 +109,8 @@ export default async function QuestionsPage({
           data={referenceData.questionStatusOptions.map((o) => ({ value: o.value, label: o.displayLabel }))}
         />
 
+        <LotFilterPicker lots={lots} defaultValues={lotIds} />
+
         <TagFilterPicker
           referenceData={referenceData}
           defaultKeys={tagKeys}
@@ -112,23 +118,17 @@ export default async function QuestionsPage({
         />
 
 
-        <div className="lg:col-span-2 flex gap-x-2">
-          <input
-            type="text"
-            name="q"
-            defaultValue={params.q}
-            placeholder="Search question or option text…"
-            className="col-span-2 rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm lg:col-span-1 w-full"
-          />
-
-          <button
-            type="submit"
-            className="col-span-2 inline-flex items-center justify-center gap-2 rounded-md bg-zinc-900 px-4 py-1.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-zinc-700 sm:col-span-1 w-fit"
-          >
-            <FiSearch size={14} />
-            Search
-          </button>
-        </div>
+        {/* The free-text search box is hidden on this page (keeps q= alive
+            for anyone arriving with it already in the URL) — the other
+            filters above still need a submit trigger, so the button stays. */}
+        <input type="hidden" name="q" defaultValue={params.q} />
+        <button
+          type="submit"
+          className="col-span-2 inline-flex items-center justify-center gap-2 rounded-md bg-zinc-900 px-4 py-1.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-zinc-700 sm:col-span-1 w-fit"
+        >
+          <FiSearch size={14} />
+          Search
+        </button>
       </form>
 
       <DataTable

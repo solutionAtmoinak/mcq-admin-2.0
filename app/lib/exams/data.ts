@@ -33,9 +33,16 @@ export type BlueprintTemplateListItem = {
 // ever editable by master (see getBlueprintTemplateForEdit), and master
 // itself only sees its own (it never sees another franchise's templates).
 // FranchiseId-vs-master comparison now happens in the SP.
-type RawBlueprintTemplateListItem = { TemplateId: string; Name: string; FilterJson: string; IsOwner: boolean };
+type RawBlueprintTemplateListItem = {
+  TemplateId: string;
+  Name: string;
+  FilterJson: string;
+  IsOwner: boolean;
+};
 
-export async function listBlueprintTemplates(): Promise<BlueprintTemplateListItem[]> {
+export async function listBlueprintTemplates(): Promise<
+  BlueprintTemplateListItem[]
+> {
   const rows = assertOk(
     await callTeacherService<RawBlueprintTemplateListItem[] | string>(17, {}),
     "Failed to load templates.",
@@ -61,28 +68,52 @@ export type BlueprintTemplateDraftForEdit = {
 // needs its own name) — restore the template's own name here since this is
 // editing that exact row, not spinning off a new one. Strict ownership only
 // — no master-franchise fallback, unlike listBlueprintTemplates.
-type RawBlueprintTemplate = { TemplateId: string; Name: string; FilterJson: string } | null;
+type RawBlueprintTemplate = {
+  TemplateId: string;
+  Name: string;
+  FilterJson: string;
+} | null;
 
-export async function getBlueprintTemplateForEdit(templateId: string): Promise<BlueprintTemplateDraftForEdit | null> {
+export async function getBlueprintTemplateForEdit(
+  templateId: string,
+): Promise<BlueprintTemplateDraftForEdit | null> {
   const row = assertOk(
-    await callTeacherService<RawBlueprintTemplate | string>(18, { TemplateId: templateId }),
+    await callTeacherService<RawBlueprintTemplate | string>(18, {
+      TemplateId: templateId,
+    }),
     "Failed to load template.",
   );
   if (!row) return null;
 
   const filterJson = parseBlueprintFilterJson(row.FilterJson);
-  const draft: TemplateDraft = { ...filterJsonToTemplateDraft(filterJson), name: row.Name };
+  const draft: TemplateDraft = {
+    ...filterJsonToTemplateDraft(filterJson),
+    name: row.Name,
+  };
 
   return { templateId: row.TemplateId, draft };
 }
 
+// A test kind option, as shown in the "Test kind" picker and its "i" info
+// modal (TestKindInfoModal) on the exam-designer and exam-templates pages.
+// `description` is optional — admin-authored free text on TestKind.Description
+// (see DB_SCHEMA.sql / sql/migrate-add-testkind-description.sql), blank for any
+// kind that hasn't been given one yet.
+export type TestKindOption = { code: string; name: string; description?: string };
+
 // Mode 19.
-export async function listTestKinds(): Promise<{ code: string; name: string }[]> {
+export async function listTestKinds(): Promise<TestKindOption[]> {
   const rows = assertOk(
-    await callTeacherService<{ Code: string; Name: string }[] | string>(19, {}),
+    await callTeacherService<
+      { Code: string; Name: string; Description?: string | null }[] | string
+    >(19, {}),
     "Failed to load test kinds.",
   );
-  return (rows ?? []).map((r) => ({ code: r.Code, name: r.Name }));
+  return (rows ?? []).map((r) => ({
+    code: r.Code,
+    name: r.Name,
+    description: r.Description ?? undefined,
+  }));
 }
 
 // No local Package table (and MockTestPackage carries no name column
@@ -120,7 +151,10 @@ type RawMockTestListItem = {
   Packages: { PackageId: string }[] | null;
 };
 
-type RawMockTestListResult = { Total: number; Items: RawMockTestListItem[] | null };
+type RawMockTestListResult = {
+  Total: number;
+  Items: RawMockTestListItem[] | null;
+};
 
 // Mode 3. IsPersonalized rows are student-generated (see Mode 7 in
 // student-portal/sql/spMcqStudentService.sql) — they're real MockTest rows
@@ -128,7 +162,10 @@ type RawMockTestListResult = { Total: number; Items: RawMockTestListItem[] | nul
 // student reaches theirs directly at its own URL, never through here.
 // Franchise scoping and the EXAM_STATUS label lookup both happen inside the
 // SP now, not in this function.
-export async function listMockTests(opts: { page: number; pageSize: number }): Promise<{ items: MockTestListItem[]; total: number }> {
+export async function listMockTests(opts: {
+  page: number;
+  pageSize: number;
+}): Promise<{ items: MockTestListItem[]; total: number }> {
   const result = assertOk(
     await callTeacherService<RawMockTestListResult | string>(3, {
       Page: opts.page,
@@ -212,25 +249,31 @@ type RawMockTestForEdit = {
     SelectionPolicyJson: string | null;
   };
   PaperSections: { SectionId: string; RulesJson: string }[] | null;
-  TestQuestions: {
-    SectionId: string;
-    SeqNo: number;
-    QuestionId: string;
-    Code: string;
-    TypeName: string;
-    Difficulty: number;
-    Status: number;
-    LotNo: string | null;
-    Marks: string;
-    Negative: string;
-    Presentation: unknown;
-    TagNames: { Name: string }[] | null;
-  }[] | null;
+  TestQuestions:
+    | {
+        SectionId: string;
+        SeqNo: number;
+        QuestionId: string;
+        Code: string;
+        TypeName: string;
+        Difficulty: number;
+        Status: number;
+        LotNo: string | null;
+        Marks: string;
+        Negative: string;
+        Presentation: unknown;
+        TagNames: { Name: string }[] | null;
+      }[]
+    | null;
 } | null;
 
-export async function getMockTestForEdit(mockTestId: string): Promise<MockTestDetail | null> {
+export async function getMockTestForEdit(
+  mockTestId: string,
+): Promise<MockTestDetail | null> {
   const row = assertOk(
-    await callTeacherService<RawMockTestForEdit | string>(20, { MockTestId: mockTestId }),
+    await callTeacherService<RawMockTestForEdit | string>(20, {
+      MockTestId: mockTestId,
+    }),
     "Failed to load exam.",
   );
   if (!row) return null;
@@ -240,17 +283,30 @@ export async function getMockTestForEdit(mockTestId: string): Promise<MockTestDe
   // Rows seeded before this recipe shape existed (e.g. the DB_SCHEMA.sql demo
   // row) carry a different, ad-hoc SelectionPolicyJson — treat anything
   // without a real `sections` array as "no recipe" rather than crashing.
-  const parsedPolicy: unknown = mt.SelectionPolicyJson ? JSON.parse(mt.SelectionPolicyJson) : null;
+  const parsedPolicy: unknown = mt.SelectionPolicyJson
+    ? JSON.parse(mt.SelectionPolicyJson)
+    : null;
   const recipe: MockTestRecipe | null =
-    parsedPolicy && typeof parsedPolicy === "object" && Array.isArray((parsedPolicy as MockTestRecipe).sections)
+    parsedPolicy &&
+    typeof parsedPolicy === "object" &&
+    Array.isArray((parsedPolicy as MockTestRecipe).sections)
       ? (parsedPolicy as MockTestRecipe)
       : null;
 
-  const rulesBySectionId = new Map<string, { marks: number; negative: number }>();
+  const rulesBySectionId = new Map<
+    string,
+    { marks: number; negative: number }
+  >();
   for (const ps of row.PaperSections ?? []) {
     try {
-      const rules = JSON.parse(ps.RulesJson) as { marks: number; negative: number };
-      rulesBySectionId.set(ps.SectionId, { marks: rules.marks, negative: rules.negative });
+      const rules = JSON.parse(ps.RulesJson) as {
+        marks: number;
+        negative: number;
+      };
+      rulesBySectionId.set(ps.SectionId, {
+        marks: rules.marks,
+        negative: rules.negative,
+      });
     } catch {
       // leave unset — falls back to 0 below
     }
@@ -259,7 +315,11 @@ export async function getMockTestForEdit(mockTestId: string): Promise<MockTestDe
   const questionsBySectionId = new Map<string, PickedQuestionView[]>();
   for (const tq of row.TestQuestions ?? []) {
     let stemPreview = "(no content)";
-    if (tq.Presentation && typeof tq.Presentation === "object" && "stem" in tq.Presentation) {
+    if (
+      tq.Presentation &&
+      typeof tq.Presentation === "object" &&
+      "stem" in tq.Presentation
+    ) {
       const stem = (tq.Presentation as { stem?: unknown }).stem;
       if (typeof stem === "string" && stem) stemPreview = stem;
     }
@@ -340,9 +400,13 @@ type RawMockTestDraft = {
   PickedBySection: { SectionId: string; Picked: number }[] | null;
 } | null;
 
-export async function getMockTestDraftForEdit(mockTestId: string): Promise<MockTestDraftForEdit | null> {
+export async function getMockTestDraftForEdit(
+  mockTestId: string,
+): Promise<MockTestDraftForEdit | null> {
   const row = assertOk(
-    await callTeacherService<RawMockTestDraft | string>(21, { MockTestId: mockTestId }),
+    await callTeacherService<RawMockTestDraft | string>(21, {
+      MockTestId: mockTestId,
+    }),
     "Failed to load exam draft.",
   );
   if (!row) return null;
@@ -354,7 +418,9 @@ export async function getMockTestDraftForEdit(mockTestId: string): Promise<MockT
     durationMin: row.DurationMin,
     markingSchemeName: row.MarkingSchemeName,
     instructions: row.Instructions,
-    settings: parseExamSettings(row.SettingsJson ? JSON.parse(row.SettingsJson) : null),
+    settings: parseExamSettings(
+      row.SettingsJson ? JSON.parse(row.SettingsJson) : null,
+    ),
     sections: (row.Sections ?? []).map((s) => {
       const rules = JSON.parse(s.RulesJson) as {
         questionType: string;
@@ -380,7 +446,13 @@ export async function getMockTestDraftForEdit(mockTestId: string): Promise<MockT
   });
 
   const pickedBySectionId: Record<string, number> = {};
-  for (const c of row.PickedBySection ?? []) pickedBySectionId[c.SectionId] = c.Picked;
+  for (const c of row.PickedBySection ?? [])
+    pickedBySectionId[c.SectionId] = c.Picked;
 
-  return { mockTestId: row.MockTestId, status: row.Status, draft, pickedBySectionId };
+  return {
+    mockTestId: row.MockTestId,
+    status: row.Status,
+    draft,
+    pickedBySectionId,
+  };
 }

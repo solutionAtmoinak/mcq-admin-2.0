@@ -6,6 +6,7 @@ import ShapeDesignerFields from "@/app/components/exams/ShapeDesignerFields";
 import { buttonClass, primaryButtonClass } from "@/app/components/common/ui";
 import { createBlueprintTemplate, updateBlueprintTemplate } from "@/app/lib/exams/actions";
 import { notify } from "@/app/lib/shared/toast";
+import type { TestKindOption } from "@/app/lib/exams/data";
 import { emptyTemplateDraft, validateTemplateDraft, type TemplateDraft } from "@/app/lib/exams/schema";
 
 // Templates are always designed from scratch — no "copy an existing
@@ -18,7 +19,7 @@ export default function TemplateDesigner({
   templateId,
   initialDraft,
 }: {
-  testKinds: { code: string; name: string }[];
+  testKinds: TestKindOption[];
   mode?: "create" | "edit";
   templateId?: string;
   initialDraft?: TemplateDraft;

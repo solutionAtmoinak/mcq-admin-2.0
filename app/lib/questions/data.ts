@@ -99,7 +99,9 @@ export type QuestionListFilters = {
   tagKeys?: string[];
   tagValues?: string[];
   status?: number;
-  lotId?: string;
+  // One or more QuestionLot ids — a question matches if its lot is ANY of
+  // these (multi-select; see LotFilterPicker).
+  lotIds?: string[];
   // Question ids to leave out of the results — used by the exam question
   // picker so a question already sitting in the target section can't be
   // picked into it a second time.
@@ -116,7 +118,7 @@ function buildFilterParams(filters: QuestionListFilters): Record<string, unknown
     TypeId: filters.typeId,
     Difficulty: filters.difficulty,
     Status: filters.status,
-    LotId: filters.lotId,
+    LotIds: filters.lotIds?.length ? filters.lotIds.join(",") : undefined,
     TagKeys: filters.tagKeys?.length ? filters.tagKeys.join(",") : undefined,
     TagValues: filters.tagValues?.length ? filters.tagValues.join(",") : undefined,
     ExcludeIds: filters.excludeIds?.length ? filters.excludeIds.join(",") : undefined,

@@ -12,6 +12,8 @@ import {
   subCardClass,
 } from "@/app/components/common/ui";
 import ExamBehaviourFields from "@/app/components/exams/ExamBehaviourFields";
+import TestKindInfoModal from "@/app/components/exams/TestKindInfoModal";
+import type { TestKindOption } from "@/app/lib/exams/data";
 import {
   effectiveBreakMin,
   effectiveExamSettings,
@@ -20,8 +22,8 @@ import {
   totalDurationMin,
   type TemplateDraft,
 } from "@/app/lib/exams/schema";
-import { useMemo, useRef, type ReactNode } from "react";
-import { FiPlus, FiTrash2 } from "react-icons/fi";
+import { useMemo, useRef, useState, type ReactNode } from "react";
+import { FiInfo, FiPlus, FiTrash2 } from "react-icons/fi";
 
 // Shared "design an exam's shape" fields — test kind, timing/marking, and a
 // freely add/remove-able section list. Used by both the exam-creation page
@@ -45,7 +47,7 @@ export default function ShapeDesignerFields({
 }: {
   draft: TemplateDraft;
   setDraft: (updater: TemplateDraft | ((d: TemplateDraft) => TemplateDraft)) => void;
-  testKinds: { code: string; name: string }[];
+  testKinds: TestKindOption[];
   name: string;
   onNameChange: (value: string) => void;
   nameLabel?: string;
@@ -67,9 +69,10 @@ export default function ShapeDesignerFields({
   // toggle off then back on restores it instead of resetting to a default.
   const lastNegativeRef = useRef<Record<string, number>>({});
   const resumeLocked = isResumableKind(draft.testKindCode);
+  const [testKindInfoOpen, setTestKindInfoOpen] = useState(false);
 
   const testKindOptions = useMemo(
-    () => testKinds.map((k) => ({ label: `${k.name} (${k.code})`, value: k.code })),
+    () => testKinds.map((k) => ({ label: k.name, value: k.code })),
     [testKinds],
   );
 
@@ -144,16 +147,28 @@ export default function ShapeDesignerFields({
             />
           </div>
           <div className="md:col-span-3">
-            <label className={labelClass}>Test kind</label>
-            <AppSelectPicker
-              data={testKindOptions}
-              value={draft.testKindCode || null}
-              onChange={handleTestKindPick}
-              placeholder="Pick a kind"
-              searchable
-              block
-              disabled={disabled}
-            />
+            <label className="block text-xs font-medium text-zinc-500 mb-1">Test kind</label>
+            <div className="flex items-center gap-3">
+              <AppSelectPicker
+                data={testKindOptions}
+                value={draft.testKindCode || null}
+                onChange={handleTestKindPick}
+                placeholder="Pick a kind"
+                searchable
+                block
+                disabled={disabled}
+              />
+              <button
+                type="button"
+                onClick={() => setTestKindInfoOpen(true)}
+                className="inline-flex  shrink-0 items-center justify-center rounded-full text-white bg-zinc-800 p-1 shadow shadow-black cursor-help"
+                title="What do the test kinds mean?"
+                aria-label="What do the test kinds mean?"
+              >
+                <FiInfo size={16} />
+              </button>
+            </div>
+
           </div>
           <div className="md:col-span-2">
             <label className={labelClass}>Total of each section time (min)</label>
@@ -229,13 +244,9 @@ export default function ShapeDesignerFields({
           <div>
             <div className={sectionLabelClass}>Sections</div>
             <p className="text-xs text-zinc-400">
-              Each section has its own time limit, a pool of questions and how many of those are mandatory to attempt.
+              <span>{resumeLocked ? "There is no section-wise timing for a resumable exam — it works on the total time only. " : "Each section has its own time limit. "}</span>
+              <span>A pool of questions and how many of those are mandatory to attempt.</span>
             </p>
-            {resumeLocked && (
-              <p className="mt-1 text-xs font-medium text-amber-600">
-                Note: there is no section-wise timing for a resumable exam — it works on the total time only.
-              </p>
-            )}
           </div>
           <button type="button" className={iconTextButtonClass} onClick={addSection}>
             <FiPlus size={13} /> Add section
@@ -364,6 +375,13 @@ export default function ShapeDesignerFields({
           {!draft.sections.length && <p className="text-sm text-zinc-400">No sections yet — add one above.</p>}
         </div>
       </div>
+
+      <TestKindInfoModal
+        open={testKindInfoOpen}
+        onClose={() => setTestKindInfoOpen(false)}
+        testKinds={testKinds}
+        selectedCode={draft.testKindCode || undefined}
+      />
     </>
   );
 }

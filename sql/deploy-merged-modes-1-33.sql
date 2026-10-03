@@ -1,6 +1,3 @@
-USE [DBDTHMCQPRO]
-GO
-/****** Object:  StoredProcedure [dbo].[spMcqTeacherService] ******/
 SET ANSI_NULLS ON
 GO
 SET QUOTED_IDENTIFIER ON
@@ -9,9 +6,10 @@ GO
 -- Author:		<Author, DbTeam>
 -- Create date: <Create Date, 2024-03-10 13:09:25.567>
 -- Description:	<Description, storage purpose>
--- Modes 3-32 added by Claude Code (mcq-admin Prisma-removal migration);
--- Mode 33 added for the one-off TblMasterMCQ4Question bulk migration —
+-- Modes 3-32 added by Claude Code (mcq-admin Prisma-removal migration) —
 -- see mcq-admin/sql/spMcqTeacherService.sql in the repo for per-mode docs.
+-- (Mode 33, the one-off TblMasterMCQ4Question bulk migration, was removed
+-- from here — superseded by dbo.spMcqMigrationService's Mode 2.)
 -- =============================================
 
 ALTER PROCEDURE [dbo].[spMcqTeacherService]
@@ -32,7 +30,7 @@ DECLARE
     @Page INT, @PageSize INT, @Total INT, @Category NVARCHAR(250),
     @SevenDaysAgo DATETIME, @StartOfDay DATETIME,
     @Q NVARCHAR(4000), @QPattern NVARCHAR(MAX), @TypeId INT, @Difficulty TINYINT, @Status INT,
-    @LotIdText NVARCHAR(50), @LotId BIGINT, @HasLotFilter BIT,
+    @LotIdText NVARCHAR(50), @LotId BIGINT, @HasLotFilter BIT, @LotIdsCsv NVARCHAR(MAX),
     @TagKeysCsv NVARCHAR(MAX), @TagValuesCsv NVARCHAR(MAX), @HasTagKeys BIT, @HasTagValues BIT,
     @ExcludeIdsCsv NVARCHAR(MAX), @HasExcludeIds BIT, @Limit INT, @QuestionId BIGINT,
     @LotNo VARCHAR(50), @LotNoAttempts INT, @ApprovedStatus INT,
@@ -269,12 +267,13 @@ END
 -- convention as spMcqStudentService's Modes 7/8 — any change to one's WHERE
 -- clause belongs in the other too). @json (both): {"Q": "<search text>",
 -- "TypeId": <int>, "Difficulty": <tinyint>, "Status": <int>,
--- "LotId": "<bigint string>", "TagKeys": "<csv>", "TagValues": "<csv>",
--- "ExcludeIds": "<csv bigint>"}. A garbage/unparseable LotId matches nothing
--- (rather than silently ignoring the filter), same defensive behavior the
--- old buildQuestionWhere had. Q is matched against QuestionSearch.SearchText
--- with a LIKE, manually escaping %, _ and [ (Prisma's `contains` did this
--- automatically).
+-- "LotIds": "<csv of bigint strings>", "TagKeys": "<csv>", "TagValues": "<csv>",
+-- "ExcludeIds": "<csv bigint>"}. LotIds is multi-select — a question matches
+-- if its lot is ANY of the listed ids. An entirely garbage/unparseable
+-- LotIds value matches nothing (rather than silently ignoring the filter),
+-- same defensive behavior the old buildQuestionWhere had. Q is matched
+-- against QuestionSearch.SearchText with a LIKE, manually escaping %, _ and
+-- [ (Prisma's `contains` did this automatically).
 
 -- Mode 7: Paginated question list (listQuestions).
 -- @json adds: {"Page": <int>, "PageSize": <int>}.
@@ -282,17 +281,15 @@ if(@Mode = 7)
 BEGIN
     SELECT
         @Page = Page, @PageSize = PageSize, @Q = Q, @TypeId = TypeId, @Difficulty = Difficulty,
-        @Status = Status, @TagKeysCsv = TagKeys, @TagValuesCsv = TagValues, @ExcludeIdsCsv = ExcludeIds
+        @Status = Status, @LotIdsCsv = LotIds, @TagKeysCsv = TagKeys, @TagValuesCsv = TagValues, @ExcludeIdsCsv = ExcludeIds
     FROM OPENJSON(@json) WITH (
         Page INT, PageSize INT, Q NVARCHAR(4000), TypeId INT, Difficulty TINYINT, Status INT,
-        TagKeys NVARCHAR(MAX), TagValues NVARCHAR(MAX), ExcludeIds NVARCHAR(MAX)
+        LotIds NVARCHAR(MAX), TagKeys NVARCHAR(MAX), TagValues NVARCHAR(MAX), ExcludeIds NVARCHAR(MAX)
     )
-    SELECT @LotIdText = LotId FROM OPENJSON(@json) WITH (LotId NVARCHAR(50))
 
     IF @Page IS NULL OR @Page < 1 SET @Page = 1
     IF @PageSize IS NULL OR @PageSize < 1 SET @PageSize = 20
-    SET @HasLotFilter = CASE WHEN @LotIdText IS NOT NULL AND LTRIM(RTRIM(@LotIdText)) <> '' THEN 1 ELSE 0 END
-    SET @LotId = TRY_CAST(@LotIdText AS BIGINT)
+    SET @HasLotFilter = CASE WHEN @LotIdsCsv IS NOT NULL AND LTRIM(RTRIM(@LotIdsCsv)) <> '' THEN 1 ELSE 0 END
     SET @HasTagKeys = CASE WHEN @TagKeysCsv IS NOT NULL AND LTRIM(RTRIM(@TagKeysCsv)) <> '' THEN 1 ELSE 0 END
     SET @HasTagValues = CASE WHEN @TagValuesCsv IS NOT NULL AND LTRIM(RTRIM(@TagValuesCsv)) <> '' THEN 1 ELSE 0 END
     SET @HasExcludeIds = CASE WHEN @ExcludeIdsCsv IS NOT NULL AND LTRIM(RTRIM(@ExcludeIdsCsv)) <> '' THEN 1 ELSE 0 END
@@ -305,7 +302,7 @@ BEGIN
       AND (@TypeId IS NULL OR q.QuestionTypeId = @TypeId)
       AND (@Difficulty IS NULL OR q.Difficulty = @Difficulty)
       AND (@Status IS NULL OR q.Status = @Status)
-      AND (@HasLotFilter = 0 OR (@LotId IS NOT NULL AND q.LotId = @LotId))
+      AND (@HasLotFilter = 0 OR q.LotId IN (SELECT TRY_CAST(value AS BIGINT) FROM STRING_SPLIT(@LotIdsCsv, ',')))
       AND (@HasExcludeIds = 0 OR q.QuestionId NOT IN (SELECT TRY_CAST(value AS BIGINT) FROM STRING_SPLIT(@ExcludeIdsCsv, ',')))
       AND (@QPattern IS NULL OR EXISTS (SELECT 1 FROM QuestionSearch qs WHERE qs.QuestionId = q.QuestionId AND qs.SearchText LIKE @QPattern ESCAPE '['))
       AND ((@HasTagKeys = 0 AND @HasTagValues = 0) OR EXISTS (
@@ -345,7 +342,7 @@ BEGIN
           AND (@TypeId IS NULL OR q.QuestionTypeId = @TypeId)
           AND (@Difficulty IS NULL OR q.Difficulty = @Difficulty)
           AND (@Status IS NULL OR q.Status = @Status)
-          AND (@HasLotFilter = 0 OR (@LotId IS NOT NULL AND q.LotId = @LotId))
+          AND (@HasLotFilter = 0 OR q.LotId IN (SELECT TRY_CAST(value AS BIGINT) FROM STRING_SPLIT(@LotIdsCsv, ',')))
           AND (@HasExcludeIds = 0 OR q.QuestionId NOT IN (SELECT TRY_CAST(value AS BIGINT) FROM STRING_SPLIT(@ExcludeIdsCsv, ',')))
           AND (@QPattern IS NULL OR EXISTS (SELECT 1 FROM QuestionSearch qs WHERE qs.QuestionId = q.QuestionId AND qs.SearchText LIKE @QPattern ESCAPE '['))
           AND ((@HasTagKeys = 0 AND @HasTagValues = 0) OR EXISTS (
@@ -372,16 +369,14 @@ if(@Mode = 8)
 BEGIN
     SELECT
         @Q = Q, @TypeId = TypeId, @Difficulty = Difficulty, @Status = Status,
-        @TagKeysCsv = TagKeys, @TagValuesCsv = TagValues, @ExcludeIdsCsv = ExcludeIds, @Limit = Limit
+        @LotIdsCsv = LotIds, @TagKeysCsv = TagKeys, @TagValuesCsv = TagValues, @ExcludeIdsCsv = ExcludeIds, @Limit = Limit
     FROM OPENJSON(@json) WITH (
         Q NVARCHAR(4000), TypeId INT, Difficulty TINYINT, Status INT,
-        TagKeys NVARCHAR(MAX), TagValues NVARCHAR(MAX), ExcludeIds NVARCHAR(MAX), Limit INT
+        LotIds NVARCHAR(MAX), TagKeys NVARCHAR(MAX), TagValues NVARCHAR(MAX), ExcludeIds NVARCHAR(MAX), Limit INT
     )
-    SELECT @LotIdText = LotId FROM OPENJSON(@json) WITH (LotId NVARCHAR(50))
 
     IF @Limit IS NULL OR @Limit < 0 SET @Limit = 0
-    SET @HasLotFilter = CASE WHEN @LotIdText IS NOT NULL AND LTRIM(RTRIM(@LotIdText)) <> '' THEN 1 ELSE 0 END
-    SET @LotId = TRY_CAST(@LotIdText AS BIGINT)
+    SET @HasLotFilter = CASE WHEN @LotIdsCsv IS NOT NULL AND LTRIM(RTRIM(@LotIdsCsv)) <> '' THEN 1 ELSE 0 END
     SET @HasTagKeys = CASE WHEN @TagKeysCsv IS NOT NULL AND LTRIM(RTRIM(@TagKeysCsv)) <> '' THEN 1 ELSE 0 END
     SET @HasTagValues = CASE WHEN @TagValuesCsv IS NOT NULL AND LTRIM(RTRIM(@TagValuesCsv)) <> '' THEN 1 ELSE 0 END
     SET @HasExcludeIds = CASE WHEN @ExcludeIdsCsv IS NOT NULL AND LTRIM(RTRIM(@ExcludeIdsCsv)) <> '' THEN 1 ELSE 0 END
@@ -394,7 +389,7 @@ BEGIN
       AND (@TypeId IS NULL OR q.QuestionTypeId = @TypeId)
       AND (@Difficulty IS NULL OR q.Difficulty = @Difficulty)
       AND (@Status IS NULL OR q.Status = @Status)
-      AND (@HasLotFilter = 0 OR (@LotId IS NOT NULL AND q.LotId = @LotId))
+      AND (@HasLotFilter = 0 OR q.LotId IN (SELECT TRY_CAST(value AS BIGINT) FROM STRING_SPLIT(@LotIdsCsv, ',')))
       AND (@HasExcludeIds = 0 OR q.QuestionId NOT IN (SELECT TRY_CAST(value AS BIGINT) FROM STRING_SPLIT(@ExcludeIdsCsv, ',')))
       AND (@QPattern IS NULL OR EXISTS (SELECT 1 FROM QuestionSearch qs WHERE qs.QuestionId = q.QuestionId AND qs.SearchText LIKE @QPattern ESCAPE '['))
       AND ((@HasTagKeys = 0 AND @HasTagValues = 0) OR EXISTS (
@@ -418,7 +413,7 @@ BEGIN
                       AND (@TypeId IS NULL OR q.QuestionTypeId = @TypeId)
                       AND (@Difficulty IS NULL OR q.Difficulty = @Difficulty)
                       AND (@Status IS NULL OR q.Status = @Status)
-                      AND (@HasLotFilter = 0 OR (@LotId IS NOT NULL AND q.LotId = @LotId))
+                      AND (@HasLotFilter = 0 OR q.LotId IN (SELECT TRY_CAST(value AS BIGINT) FROM STRING_SPLIT(@LotIdsCsv, ',')))
                       AND (@HasExcludeIds = 0 OR q.QuestionId NOT IN (SELECT TRY_CAST(value AS BIGINT) FROM STRING_SPLIT(@ExcludeIdsCsv, ',')))
                       AND (@QPattern IS NULL OR EXISTS (SELECT 1 FROM QuestionSearch qs WHERE qs.QuestionId = q.QuestionId AND qs.SearchText LIKE @QPattern ESCAPE '['))
                       AND ((@HasTagKeys = 0 AND @HasTagValues = 0) OR EXISTS (
@@ -936,7 +931,7 @@ if(@Mode = 19)
 BEGIN
     SET @output = (
         SELECT 1 AS ID, 200 AS statuscode,
-        (SELECT Code, Name FROM TestKind WHERE IsDeleted = 0 ORDER BY TestKindId FOR JSON PATH, INCLUDE_NULL_VALUES) AS response
+        (SELECT Code, Name, Description FROM TestKind WHERE IsDeleted = 0 ORDER BY TestKindId FOR JSON PATH, INCLUDE_NULL_VALUES) AS response
         FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER
     );
     COMMIT RETURN;
@@ -1756,165 +1751,6 @@ BEGIN
     COMMIT RETURN;
 END
 
--- Mode 33: Create questions in bulk, uncapped (createQuestionsBulk). Byte-
--- identical to Mode 13 (createQuestions) — same @json contract, same DB-level
--- checks, same writes (Question, QuestionVersion, find-or-create
--- TagDimension/Tag + QuestionTag, QuestionSearch, zeroed QuestionStat) —
--- except the "IF @Total > 200" batch cap is removed. Exists only for one-off
--- bulk migrations (e.g. the TblMasterMCQ4Question -> Question Bank import)
--- where forcing a client-side <=200 loop adds nothing: the tag find-or-create
--- below already dedupes correctly across the whole call (TagDimension/Tag
--- matched by exact Name, scoped by FranchiseId, so a value repeated across
--- hundreds of questions in one call still reuses a single TagId — see the
--- WHILE loop below, unchanged from Mode 13). Not exposed in the UI; prefer
--- Mode 13 for anything reachable from the admin app itself.
-if(@Mode = 33)
-BEGIN
-    SELECT @LotIdText = LotId FROM OPENJSON(@json) WITH (LotId NVARCHAR(50))
-    SET @HasLotFilter = CASE WHEN @LotIdText IS NOT NULL AND LTRIM(RTRIM(@LotIdText)) <> '' THEN 1 ELSE 0 END
-    SET @LotId = TRY_CAST(@LotIdText AS BIGINT)
-
-    SET @QuestionsJson = NULL
-    SELECT @QuestionsJson = Q FROM OPENJSON(@json) WITH (Q NVARCHAR(MAX) '$.Questions' AS JSON)
-    IF @QuestionsJson IS NULL
-        SELECT @QuestionsJson = Q FROM OPENJSON(@json) WITH (Q NVARCHAR(MAX) '$.Questions')
-    IF @QuestionsJson IS NOT NULL AND ISJSON(@QuestionsJson) = 0 SET @QuestionsJson = NULL
-
-    DELETE FROM @QInput
-    INSERT INTO @QInput (Code, TypeCode, Difficulty, Status, EstSolveSec, PresentationJson, AnswerJson, SearchText, TagsJson)
-    SELECT Code, TypeCode, Difficulty, Status, EstSolveSec, PresentationJson, AnswerJson, SearchText, COALESCE(Tags, TagsStr)
-    FROM OPENJSON(@QuestionsJson)
-    WITH (
-        Code NVARCHAR(50), TypeCode VARCHAR(50), Difficulty TINYINT, Status INT, EstSolveSec SMALLINT,
-        PresentationJson NVARCHAR(MAX), AnswerJson NVARCHAR(MAX), SearchText NVARCHAR(MAX),
-        Tags NVARCHAR(MAX) AS JSON, TagsStr NVARCHAR(MAX) '$.Tags'
-    )
-
-    SELECT @Total = COUNT(*) FROM @QInput
-    IF @Total = 0
-    BEGIN
-        SET @output = (SELECT 1 AS ID, 400 AS statuscode, 'No questions to create.' AS response FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER);
-        COMMIT RETURN;
-    END
-    IF EXISTS (SELECT 1 FROM @QInput qi WHERE NOT EXISTS (SELECT 1 FROM QuestionType t WHERE t.Code = qi.TypeCode AND t.IsDeleted = 0))
-    BEGIN
-        SET @output = (SELECT 1 AS ID, 400 AS statuscode, 'One or more questions have an unknown question type.' AS response FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER);
-        COMMIT RETURN;
-    END
-    IF EXISTS (SELECT Code FROM @QInput WHERE Code IS NOT NULL AND LTRIM(RTRIM(Code)) <> '' GROUP BY Code HAVING COUNT(*) > 1)
-    BEGIN
-        SET @output = (SELECT 1 AS ID, 400 AS statuscode, 'Duplicate code(s) in this batch.' AS response FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER);
-        COMMIT RETURN;
-    END
-    IF EXISTS (SELECT 1 FROM @QInput qi WHERE qi.Code IS NOT NULL AND LTRIM(RTRIM(qi.Code)) <> '' AND EXISTS (SELECT 1 FROM Question q WHERE q.Code = qi.Code))
-    BEGIN
-        SET @output = (SELECT 1 AS ID, 409 AS statuscode, 'One or more codes already exist.' AS response FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER);
-        COMMIT RETURN;
-    END
-
-    SELECT @ApprovedStatus = TRY_CAST(ServiceValue AS INT) FROM _InternalService WHERE Category = 'QUESTION_STATUS' AND ServiceLabel = 'APPROVED' AND IsActive = 1
-
-    DELETE FROM @CreatedOutput
-    SELECT @RowNo = MIN(RowNo), @MaxRowNo = MAX(RowNo) FROM @QInput
-    WHILE @RowNo IS NOT NULL AND @RowNo <= @MaxRowNo
-    BEGIN
-        SELECT
-            @CurCode = Code, @CurTypeCode = TypeCode, @CurDifficulty = Difficulty, @CurStatus = Status,
-            @CurEstSolveSec = EstSolveSec, @CurPresentationJson = PresentationJson, @CurAnswerJson = AnswerJson,
-            @CurSearchText = SearchText, @CurTagsJson = TagsJson
-        FROM @QInput WHERE RowNo = @RowNo
-
-        SELECT @CurTypeId = QuestionTypeId FROM QuestionType WHERE Code = @CurTypeCode AND IsDeleted = 0
-
-        IF @CurCode IS NULL OR LTRIM(RTRIM(@CurCode)) = ''
-        BEGIN
-            SET @CodeAttempts = 0
-            WHILE 1 = 1
-            BEGIN
-                SET @CurCode = 'Q-' + UPPER(LEFT(@CurTypeCode, 3)) + '-' + UPPER(CONVERT(VARCHAR(8), CRYPT_GEN_RANDOM(4), 2))
-                IF NOT EXISTS (SELECT 1 FROM Question WHERE Code = @CurCode) BREAK
-                SET @CodeAttempts += 1
-                IF @CodeAttempts > 5 BREAK
-            END
-        END
-
-        DELETE FROM @NewId
-        IF @CurStatus = @ApprovedStatus
-            INSERT INTO dbo.Question (Code, QuestionTypeId, Difficulty, Status, EstSolveSec, LotId, ApprovedBy, ApprovedOn, CreatedBy, FranchiseId)
-            OUTPUT INSERTED.QuestionId INTO @NewId
-            VALUES (@CurCode, @CurTypeId, @CurDifficulty, @CurStatus, @CurEstSolveSec, @LotId, @UserId, GETDATE(), @UserId, @FranchiseId)
-        ELSE
-            INSERT INTO dbo.Question (Code, QuestionTypeId, Difficulty, Status, EstSolveSec, LotId, CreatedBy, FranchiseId)
-            OUTPUT INSERTED.QuestionId INTO @NewId
-            VALUES (@CurCode, @CurTypeId, @CurDifficulty, @CurStatus, @CurEstSolveSec, @LotId, @UserId, @FranchiseId)
-        SELECT @NewQuestionId = Id FROM @NewId
-
-        SET @ContentHash = LOWER(CONVERT(CHAR(64), HASHBYTES('SHA2_256', @CurPresentationJson + '|' + @CurAnswerJson), 2))
-
-        DELETE FROM @NewId
-        INSERT INTO dbo.QuestionVersion (QuestionId, VersionNo, Locale, PresentationJson, AnswerJson, MetaJson, ContentHash, ChangeNote, CreatedBy, FranchiseId)
-        OUTPUT INSERTED.VersionId INTO @NewId
-        VALUES (@NewQuestionId, 1, 'en', @CurPresentationJson, @CurAnswerJson, N'{"source":"question-bank-ui"}', @ContentHash, 'Initial version', @UserId, @FranchiseId)
-        SELECT @NewVersionId = Id FROM @NewId
-
-        UPDATE dbo.Question SET CurrentVersionId = @NewVersionId, ModifiedBy = @UserId, ModifiedOn = GETDATE() WHERE QuestionId = @NewQuestionId
-
-        DELETE FROM @TagInput
-        INSERT INTO @TagInput (TagKey, TagValue)
-        SELECT [Key], Value FROM OPENJSON(@CurTagsJson) WITH ([Key] NVARCHAR(200) '$.Key', Value NVARCHAR(200) '$.Value')
-        WHERE [Key] IS NOT NULL AND LTRIM(RTRIM([Key])) <> '' AND Value IS NOT NULL AND LTRIM(RTRIM(Value)) <> ''
-
-        SELECT @TagRowNo = MIN(RowNo), @TagMaxRowNo = MAX(RowNo) FROM @TagInput
-        WHILE @TagRowNo IS NOT NULL AND @TagRowNo <= @TagMaxRowNo
-        BEGIN
-            SELECT @TagKey = LTRIM(RTRIM(TagKey)), @TagValue = LTRIM(RTRIM(TagValue)) FROM @TagInput WHERE RowNo = @TagRowNo
-
-            SET @DimensionId = NULL
-            SELECT TOP 1 @DimensionId = DimensionId FROM TagDimension
-            WHERE IsDeleted = 0 AND FranchiseId = @FranchiseId AND (Name = @TagKey OR Code = @TagKey)
-
-            IF @DimensionId IS NULL
-            BEGIN
-                SET @DimCode = LOWER(LEFT(REPLACE(REPLACE(REPLACE(REPLACE(@TagKey, ' ', '_'), '-', '_'), '/', '_'), '\', '_'), 40))
-                IF @DimCode = '' SET @DimCode = 'tag'
-                SET @DimCode = @DimCode + '_' + LOWER(CONVERT(VARCHAR(8), CRYPT_GEN_RANDOM(4), 2))
-                INSERT INTO dbo.TagDimension (Code, Name, CreatedBy, FranchiseId) VALUES (@DimCode, @TagKey, @UserId, @FranchiseId)
-                SET @DimensionId = CAST(SCOPE_IDENTITY() AS INT)
-            END
-
-            SET @TagId = NULL
-            SELECT TOP 1 @TagId = TagId FROM Tag WHERE DimensionId = @DimensionId AND IsDeleted = 0 AND FranchiseId = @FranchiseId AND Name = @TagValue
-
-            IF @TagId IS NULL
-            BEGIN
-                DELETE FROM @NewId
-                INSERT INTO dbo.Tag (DimensionId, Name, CreatedBy, FranchiseId)
-                OUTPUT INSERTED.TagId INTO @NewId
-                VALUES (@DimensionId, @TagValue, @UserId, @FranchiseId)
-                SELECT @TagId = Id FROM @NewId
-            END
-
-            IF NOT EXISTS (SELECT 1 FROM QuestionTag WHERE QuestionId = @NewQuestionId AND TagId = @TagId)
-                INSERT INTO dbo.QuestionTag (TagId, QuestionId, CreatedBy, FranchiseId) VALUES (@TagId, @NewQuestionId, @UserId, @FranchiseId)
-
-            SET @TagRowNo += 1
-        END
-
-        INSERT INTO dbo.QuestionSearch (QuestionId, Locale, SearchText, CreatedBy, FranchiseId) VALUES (@NewQuestionId, 'en', @CurSearchText, @UserId, @FranchiseId)
-        INSERT INTO dbo.QuestionStat (QuestionId, CreatedBy, FranchiseId) VALUES (@NewQuestionId, @UserId, @FranchiseId)
-        INSERT INTO @CreatedOutput (Code, QuestionId) VALUES (@CurCode, @NewQuestionId)
-
-        SET @RowNo += 1
-    END
-
-    SET @output = (
-        SELECT 1 AS ID, 200 AS statuscode,
-        (SELECT JSON_QUERY((SELECT Code, CAST(QuestionId AS VARCHAR(20)) AS QuestionId FROM @CreatedOutput ORDER BY QuestionId FOR JSON PATH)) AS Created FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER) AS response
-        FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER
-    );
-    COMMIT RETURN;
-END
-
 END
 COMMIT TRANSACTION
 
@@ -1940,3 +1776,4 @@ COMMIT TRANSACTION
 		SET @output = JSON_QUERY((select 0 as ID, 400 as StatusCode, ERROR_MESSAGE() as response FOR JSON PATH, WITHOUT_ARRAY_WRAPPER));
     END CATCH
 END
+GO

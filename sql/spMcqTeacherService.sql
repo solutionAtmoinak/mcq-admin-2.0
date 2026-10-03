@@ -64,7 +64,7 @@
 --     @ItemsJson NVARCHAR(MAX), -- Mode 7's 65535-char JSON_QUERY-nesting fix; new, needs merging in.
 --     @SevenDaysAgo DATETIME, @StartOfDay DATETIME,
 --     @Q NVARCHAR(4000), @QPattern NVARCHAR(MAX), @TypeId INT, @Difficulty TINYINT, @Status INT,
---     @LotIdText NVARCHAR(50), @LotId BIGINT, @HasLotFilter BIT,
+--     @LotIdText NVARCHAR(50), @LotId BIGINT, @HasLotFilter BIT, @LotIdsCsv NVARCHAR(MAX),
 --     @TagKeysCsv NVARCHAR(MAX), @TagValuesCsv NVARCHAR(MAX), @HasTagKeys BIT, @HasTagValues BIT,
 --     @ExcludeIdsCsv NVARCHAR(MAX), @HasExcludeIds BIT, @Limit INT, @QuestionId BIGINT,
 --     @LotNo VARCHAR(50), @LotNoAttempts INT, @ApprovedStatus INT,
@@ -262,12 +262,13 @@ END
 -- convention as spMcqStudentService's Modes 7/8 — any change to one's WHERE
 -- clause belongs in the other too). @json (both): {"Q": "<search text>",
 -- "TypeId": <int>, "Difficulty": <tinyint>, "Status": <int>,
--- "LotId": "<bigint string>", "TagKeys": "<csv>", "TagValues": "<csv>",
--- "ExcludeIds": "<csv bigint>"}. A garbage/unparseable LotId matches nothing
--- (rather than silently ignoring the filter), same defensive behavior the
--- old buildQuestionWhere had. Q is matched against QuestionSearch.SearchText
--- with a LIKE, manually escaping %, _ and [ (Prisma's `contains` did this
--- automatically).
+-- "LotIds": "<csv of bigint strings>", "TagKeys": "<csv>", "TagValues": "<csv>",
+-- "ExcludeIds": "<csv bigint>"}. LotIds is multi-select — a question matches
+-- if its lot is ANY of the listed ids. An entirely garbage/unparseable
+-- LotIds value matches nothing (rather than silently ignoring the filter),
+-- same defensive behavior the old buildQuestionWhere had. Q is matched
+-- against QuestionSearch.SearchText with a LIKE, manually escaping %, _ and
+-- [ (Prisma's `contains` did this automatically).
 
 -- Mode 7: Paginated question list (listQuestions).
 -- @json adds: {"Page": <int>, "PageSize": <int>}.
@@ -275,17 +276,15 @@ if(@Mode = 7)
 BEGIN
     SELECT
         @Page = Page, @PageSize = PageSize, @Q = Q, @TypeId = TypeId, @Difficulty = Difficulty,
-        @Status = Status, @TagKeysCsv = TagKeys, @TagValuesCsv = TagValues, @ExcludeIdsCsv = ExcludeIds
+        @Status = Status, @LotIdsCsv = LotIds, @TagKeysCsv = TagKeys, @TagValuesCsv = TagValues, @ExcludeIdsCsv = ExcludeIds
     FROM OPENJSON(@json) WITH (
         Page INT, PageSize INT, Q NVARCHAR(4000), TypeId INT, Difficulty TINYINT, Status INT,
-        TagKeys NVARCHAR(MAX), TagValues NVARCHAR(MAX), ExcludeIds NVARCHAR(MAX)
+        LotIds NVARCHAR(MAX), TagKeys NVARCHAR(MAX), TagValues NVARCHAR(MAX), ExcludeIds NVARCHAR(MAX)
     )
-    SELECT @LotIdText = LotId FROM OPENJSON(@json) WITH (LotId NVARCHAR(50))
 
     IF @Page IS NULL OR @Page < 1 SET @Page = 1
     IF @PageSize IS NULL OR @PageSize < 1 SET @PageSize = 20
-    SET @HasLotFilter = CASE WHEN @LotIdText IS NOT NULL AND LTRIM(RTRIM(@LotIdText)) <> '' THEN 1 ELSE 0 END
-    SET @LotId = TRY_CAST(@LotIdText AS BIGINT)
+    SET @HasLotFilter = CASE WHEN @LotIdsCsv IS NOT NULL AND LTRIM(RTRIM(@LotIdsCsv)) <> '' THEN 1 ELSE 0 END
     SET @HasTagKeys = CASE WHEN @TagKeysCsv IS NOT NULL AND LTRIM(RTRIM(@TagKeysCsv)) <> '' THEN 1 ELSE 0 END
     SET @HasTagValues = CASE WHEN @TagValuesCsv IS NOT NULL AND LTRIM(RTRIM(@TagValuesCsv)) <> '' THEN 1 ELSE 0 END
     SET @HasExcludeIds = CASE WHEN @ExcludeIdsCsv IS NOT NULL AND LTRIM(RTRIM(@ExcludeIdsCsv)) <> '' THEN 1 ELSE 0 END
@@ -298,7 +297,7 @@ BEGIN
       AND (@TypeId IS NULL OR q.QuestionTypeId = @TypeId)
       AND (@Difficulty IS NULL OR q.Difficulty = @Difficulty)
       AND (@Status IS NULL OR q.Status = @Status)
-      AND (@HasLotFilter = 0 OR (@LotId IS NOT NULL AND q.LotId = @LotId))
+      AND (@HasLotFilter = 0 OR q.LotId IN (SELECT TRY_CAST(value AS BIGINT) FROM STRING_SPLIT(@LotIdsCsv, ',')))
       AND (@HasExcludeIds = 0 OR q.QuestionId NOT IN (SELECT TRY_CAST(value AS BIGINT) FROM STRING_SPLIT(@ExcludeIdsCsv, ',')))
       AND (@QPattern IS NULL OR EXISTS (SELECT 1 FROM QuestionSearch qs WHERE qs.QuestionId = q.QuestionId AND qs.SearchText LIKE @QPattern ESCAPE '['))
       AND ((@HasTagKeys = 0 AND @HasTagValues = 0) OR EXISTS (
@@ -350,7 +349,7 @@ BEGIN
           AND (@TypeId IS NULL OR q.QuestionTypeId = @TypeId)
           AND (@Difficulty IS NULL OR q.Difficulty = @Difficulty)
           AND (@Status IS NULL OR q.Status = @Status)
-          AND (@HasLotFilter = 0 OR (@LotId IS NOT NULL AND q.LotId = @LotId))
+          AND (@HasLotFilter = 0 OR q.LotId IN (SELECT TRY_CAST(value AS BIGINT) FROM STRING_SPLIT(@LotIdsCsv, ',')))
           AND (@HasExcludeIds = 0 OR q.QuestionId NOT IN (SELECT TRY_CAST(value AS BIGINT) FROM STRING_SPLIT(@ExcludeIdsCsv, ',')))
           AND (@QPattern IS NULL OR EXISTS (SELECT 1 FROM QuestionSearch qs WHERE qs.QuestionId = q.QuestionId AND qs.SearchText LIKE @QPattern ESCAPE '['))
           AND ((@HasTagKeys = 0 AND @HasTagValues = 0) OR EXISTS (
@@ -377,16 +376,14 @@ if(@Mode = 8)
 BEGIN
     SELECT
         @Q = Q, @TypeId = TypeId, @Difficulty = Difficulty, @Status = Status,
-        @TagKeysCsv = TagKeys, @TagValuesCsv = TagValues, @ExcludeIdsCsv = ExcludeIds, @Limit = Limit
+        @LotIdsCsv = LotIds, @TagKeysCsv = TagKeys, @TagValuesCsv = TagValues, @ExcludeIdsCsv = ExcludeIds, @Limit = Limit
     FROM OPENJSON(@json) WITH (
         Q NVARCHAR(4000), TypeId INT, Difficulty TINYINT, Status INT,
-        TagKeys NVARCHAR(MAX), TagValues NVARCHAR(MAX), ExcludeIds NVARCHAR(MAX), Limit INT
+        LotIds NVARCHAR(MAX), TagKeys NVARCHAR(MAX), TagValues NVARCHAR(MAX), ExcludeIds NVARCHAR(MAX), Limit INT
     )
-    SELECT @LotIdText = LotId FROM OPENJSON(@json) WITH (LotId NVARCHAR(50))
 
     IF @Limit IS NULL OR @Limit < 0 SET @Limit = 0
-    SET @HasLotFilter = CASE WHEN @LotIdText IS NOT NULL AND LTRIM(RTRIM(@LotIdText)) <> '' THEN 1 ELSE 0 END
-    SET @LotId = TRY_CAST(@LotIdText AS BIGINT)
+    SET @HasLotFilter = CASE WHEN @LotIdsCsv IS NOT NULL AND LTRIM(RTRIM(@LotIdsCsv)) <> '' THEN 1 ELSE 0 END
     SET @HasTagKeys = CASE WHEN @TagKeysCsv IS NOT NULL AND LTRIM(RTRIM(@TagKeysCsv)) <> '' THEN 1 ELSE 0 END
     SET @HasTagValues = CASE WHEN @TagValuesCsv IS NOT NULL AND LTRIM(RTRIM(@TagValuesCsv)) <> '' THEN 1 ELSE 0 END
     SET @HasExcludeIds = CASE WHEN @ExcludeIdsCsv IS NOT NULL AND LTRIM(RTRIM(@ExcludeIdsCsv)) <> '' THEN 1 ELSE 0 END
@@ -399,7 +396,7 @@ BEGIN
       AND (@TypeId IS NULL OR q.QuestionTypeId = @TypeId)
       AND (@Difficulty IS NULL OR q.Difficulty = @Difficulty)
       AND (@Status IS NULL OR q.Status = @Status)
-      AND (@HasLotFilter = 0 OR (@LotId IS NOT NULL AND q.LotId = @LotId))
+      AND (@HasLotFilter = 0 OR q.LotId IN (SELECT TRY_CAST(value AS BIGINT) FROM STRING_SPLIT(@LotIdsCsv, ',')))
       AND (@HasExcludeIds = 0 OR q.QuestionId NOT IN (SELECT TRY_CAST(value AS BIGINT) FROM STRING_SPLIT(@ExcludeIdsCsv, ',')))
       AND (@QPattern IS NULL OR EXISTS (SELECT 1 FROM QuestionSearch qs WHERE qs.QuestionId = q.QuestionId AND qs.SearchText LIKE @QPattern ESCAPE '['))
       AND ((@HasTagKeys = 0 AND @HasTagValues = 0) OR EXISTS (
@@ -423,7 +420,7 @@ BEGIN
                       AND (@TypeId IS NULL OR q.QuestionTypeId = @TypeId)
                       AND (@Difficulty IS NULL OR q.Difficulty = @Difficulty)
                       AND (@Status IS NULL OR q.Status = @Status)
-                      AND (@HasLotFilter = 0 OR (@LotId IS NOT NULL AND q.LotId = @LotId))
+                      AND (@HasLotFilter = 0 OR q.LotId IN (SELECT TRY_CAST(value AS BIGINT) FROM STRING_SPLIT(@LotIdsCsv, ',')))
                       AND (@HasExcludeIds = 0 OR q.QuestionId NOT IN (SELECT TRY_CAST(value AS BIGINT) FROM STRING_SPLIT(@ExcludeIdsCsv, ',')))
                       AND (@QPattern IS NULL OR EXISTS (SELECT 1 FROM QuestionSearch qs WHERE qs.QuestionId = q.QuestionId AND qs.SearchText LIKE @QPattern ESCAPE '['))
                       AND ((@HasTagKeys = 0 AND @HasTagValues = 0) OR EXISTS (
@@ -941,7 +938,7 @@ if(@Mode = 19)
 BEGIN
     SET @output = (
         SELECT 1 AS ID, 200 AS statuscode,
-        (SELECT Code, Name FROM TestKind WHERE IsDeleted = 0 ORDER BY TestKindId FOR JSON PATH, INCLUDE_NULL_VALUES) AS response
+        (SELECT Code, Name, Description FROM TestKind WHERE IsDeleted = 0 ORDER BY TestKindId FOR JSON PATH, INCLUDE_NULL_VALUES) AS response
         FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER
     );
     COMMIT RETURN;
@@ -1766,18 +1763,18 @@ BEGIN
     COMMIT RETURN;
 END
 
--- Mode 33: Create questions in bulk, uncapped (createQuestionsBulk). Byte-
--- identical to Mode 13 (createQuestions) — same @json contract, same DB-level
--- checks, same writes (Question, QuestionVersion, find-or-create
+-- Mode 33: Create questions in bulk, uncapped (createQuestionsBulk).
+-- DEPRECATED / UNUSED — superseded by Mode 2 of the dedicated
+-- dbo.spMcqMigrationService (see mcq-admin/sql/spMcqMigrationService.sql),
+-- which moved this exact logic out of the production teacher SP so
+-- migration-only work doesn't live alongside it. Left deployed here
+-- (harmless, nothing calls it) rather than torn out — do not wire anything
+-- new to this mode; use spMcqMigrationService instead.
+--
+-- Byte-identical to Mode 13 (createQuestions) — same @json contract, same
+-- DB-level checks, same writes (Question, QuestionVersion, find-or-create
 -- TagDimension/Tag + QuestionTag, QuestionSearch, zeroed QuestionStat) —
--- except the "IF @Total > 200" batch cap is removed. Exists only for one-off
--- bulk migrations (e.g. the TblMasterMCQ4Question -> Question Bank import)
--- where forcing a client-side <=200 loop adds nothing: the tag find-or-create
--- below already dedupes correctly across the whole call (TagDimension/Tag
--- matched by exact Name, scoped by FranchiseId, so a value repeated across
--- hundreds of questions in one call still reuses a single TagId — see the
--- WHILE loop below, unchanged from Mode 13). Not exposed in the UI; prefer
--- Mode 13 for anything reachable from the admin app itself.
+-- except the "IF @Total > 200" batch cap is removed.
 if(@Mode = 33)
 BEGIN
     SELECT @LotIdText = LotId FROM OPENJSON(@json) WITH (LotId NVARCHAR(50))

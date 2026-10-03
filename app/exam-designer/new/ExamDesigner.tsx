@@ -7,7 +7,7 @@ import MockTestStatusSelect from "@/app/components/exams/MockTestStatusSelect";
 import ShapeDesignerFields from "@/app/components/exams/ShapeDesignerFields";
 import StartFromTemplateField from "@/app/components/exams/StartFromTemplateField";
 import { createMockTestFromDraft, updateMockTestFromDraft } from "@/app/lib/exams/actions";
-import type { BlueprintTemplateListItem } from "@/app/lib/exams/data";
+import type { BlueprintTemplateListItem, TestKindOption } from "@/app/lib/exams/data";
 import { emptyTemplateDraft, filterJsonToTemplateDraft, validateShapeDraft, type TemplateDraft } from "@/app/lib/exams/schema";
 import { notify } from "@/app/lib/shared/toast";
 import { useRouter } from "next/navigation";
@@ -33,7 +33,7 @@ export default function ExamDesigner({
   examStatusOptions,
 }: {
   templates: BlueprintTemplateListItem[];
-  testKinds: { code: string; name: string }[];
+  testKinds: TestKindOption[];
   initialTemplateId?: string | null;
   mode?: "create" | "edit";
   mockTestId?: string;

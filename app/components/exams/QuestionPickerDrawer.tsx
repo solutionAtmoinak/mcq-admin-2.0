@@ -21,8 +21,10 @@ const pageArrowClass =
 // Filter-and-pick UI for a single exam section's question pool. Rendered
 // inside the shared Drawer shell so it reads as the same "slide-over panel"
 // language as the rest of the app. Mirrors the question bank list page's own
-// filters (type/difficulty/status/tags/search) plus a lot-number filter that
-// page doesn't have, and adds bulk selection on top: a page-level checkbox,
+// filters (type/difficulty/status/lot/tags/search) — lot here stays
+// single-select, unlike the list page's multi-select LotFilterPicker, since
+// a section's question pool is more often drawn from one lot at a time —
+// and adds bulk selection on top: a page-level checkbox,
 // a cross-page "select all matching filters" action, and a capacity guard so
 // a section's defined pool size can never be oversold.
 export default function QuestionPickerDrawer({
@@ -114,7 +116,7 @@ export default function QuestionPickerDrawer({
           typeId: typeId ?? undefined,
           difficulty: difficulty ?? undefined,
           status: status ?? undefined,
-          lotId: lotId ?? undefined,
+          lotIds: lotId ? [lotId] : undefined,
           tagKeys,
           tagValues,
           excludeIds: excludeQuestionIds,
@@ -195,7 +197,7 @@ export default function QuestionPickerDrawer({
           typeId: typeId ?? undefined,
           difficulty: difficulty ?? undefined,
           status: status ?? undefined,
-          lotId: lotId ?? undefined,
+          lotIds: lotId ? [lotId] : undefined,
           tagKeys,
           tagValues,
           excludeIds: excludeQuestionIds,

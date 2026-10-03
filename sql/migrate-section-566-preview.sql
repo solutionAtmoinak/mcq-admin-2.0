@@ -1,23 +1,3 @@
--- =====================================================================
--- Migration preview: TblMasterMCQ4Question (MCQSectionId = 566, IsDeleted = 0)
--- -> Mode 13 (createQuestions) JSON payload shape.
---
--- Run this against the OLD DB. One row per legacy question. PresentationJson
--- / AnswerJson / TagsJson come out as ready-to-use JSON text matching
--- Mode 13's Questions[] contract (see mcq-admin/app/lib/questions/schema.ts
--- buildContent(), and mcq-admin/sql/spMcqTeacherService.sql Mode 13).
---
--- Requires DBDTHLMSPro to be reachable cross-database (same server) for
--- GetDocumentPath(); if not on the same instance, prefix calls with a
--- linked server name instead.
---
--- This is a READ-ONLY preview step. Review the output here before wiring
--- it into the Mode 13 API calls (see plan: temp API route in mcq-admin that
--- mints a QuestionLot via Mode 12, resolves the Approved status via
--- getQuestionStatus(), batches these rows into <=200-row Mode 13 calls,
--- then runs a CreatedBy cleanup UPDATE scoped to that LotId).
--- =====================================================================
-
 SET NOCOUNT ON;
 
 ;WITH BaseQ AS (
@@ -85,19 +65,52 @@ CorrectLetters AS (
     JOIN dbo.TblMasterMCQ7SetCorrectAnswer c ON c.MCQOptionId = o.MCQOptionId
     GROUP BY o.MCQQuestionId
 ),
-TagsJson AS (
+TagsJson AS
+(
     SELECT
-        t.QuestionId AS MCQQuestionId,
+        q.MCQQuestionId,
+        JSON_QUERY(
         (
-            SELECT N'Chapter' AS [Key], t2.TagName AS [Value]
-            FROM dbo.TblMasterMCQ9QuestionTags t2
-            WHERE t2.QuestionId = t.QuestionId
-              AND t2.IsDeleted = 0
-              AND NULLIF(LTRIM(RTRIM(t2.TagName)), N'') IS NOT NULL
+            SELECT DISTINCT
+                x.[Key],
+                x.[Value]
+            FROM
+            (
+                -- Question Tags
+                SELECT
+                    N'Tag' AS [Key],
+                    t.TagName AS [Value]
+                FROM dbo.TblMasterMCQ9QuestionTags t
+                WHERE t.QuestionId = q.MCQQuestionId
+                  AND t.IsDeleted = 0
+                  AND NULLIF(LTRIM(RTRIM(t.TagName)), N'') IS NOT NULL
+
+                UNION ALL
+
+                -- Chapter information
+                SELECT
+                    v.[Key],
+                    v.[Value]
+                FROM dbo.tblMasterMCQ10Chapter c
+                LEFT JOIN dbo.tblMasterSectionChapters ch
+                    ON ch.SectionChapterId = c.ChapterId
+                LEFT JOIN dbo.tblMasterSectionChapters parent
+                    ON parent.SectionChapterId = c.MasterParentId
+                CROSS APPLY
+                (
+                    VALUES
+                        (N'ChapterId',        CONVERT(nvarchar(20), c.ChapterId)),
+                        (N'ChapterName',      NULLIF(TRIM(ch.SectionChapterName), N'')),
+                        (N'MasterParentId',   CONVERT(nvarchar(20), c.MasterParentId)),
+                        (N'MasterParentName', NULLIF(TRIM(parent.SectionChapterName), N''))
+                ) v([Key], [Value])
+                WHERE c.QuestionId = q.MCQQuestionId
+                  AND c.IsDeleted = 0
+                  AND v.[Value] IS NOT NULL
+            ) x
             FOR JSON PATH
-        ) AS TagsArrayJson
-    FROM dbo.TblMasterMCQ9QuestionTags t
-    GROUP BY t.QuestionId
+        )) AS TagsArrayJson
+    FROM dbo.TblMasterMCQ4Question q
 ),
 SearchWords AS (
     SELECT
@@ -154,37 +167,3 @@ LEFT JOIN CorrectLetters cl ON cl.MCQQuestionId = q.MCQQuestionId
 LEFT JOIN TagsJson tj ON tj.MCQQuestionId = q.MCQQuestionId
 LEFT JOIN SearchWords sw ON sw.MCQQuestionId = q.MCQQuestionId
 ORDER BY q.MCQQuestionId;
-
--- =====================================================================
--- Sanity checks -- run these too and flag any non-zero counts before
--- trusting the batch:
--- =====================================================================
-
--- Questions with no linked correct answer (would migrate as correct: [])
-SELECT q.MCQQuestionId
-FROM TblMasterMCQ4Question q
-WHERE q.MCQSectionId = 566 AND q.IsDeleted = 0
-  AND NOT EXISTS (
-      SELECT 1
-      FROM TblMasterMCQ6SetAnswerOption o
-      JOIN TblMasterMCQ7SetCorrectAnswer c ON c.MCQOptionId = o.MCQOptionId
-      WHERE o.MCQQuestionId = q.MCQQuestionId
-  );
-
--- Questions with more than one linked correct answer (unexpected, since
--- IsMultipleCorrect = 0 for all rows in this section)
-SELECT q.MCQQuestionId, COUNT(*) AS CorrectCount
-FROM TblMasterMCQ4Question q
-JOIN TblMasterMCQ6SetAnswerOption o ON o.MCQQuestionId = q.MCQQuestionId
-JOIN TblMasterMCQ7SetCorrectAnswer c ON c.MCQOptionId = o.MCQOptionId
-WHERE q.MCQSectionId = 566 AND q.IsDeleted = 0
-GROUP BY q.MCQQuestionId
-HAVING COUNT(*) > 1;
-
--- Questions with fewer than 2 options
-SELECT q.MCQQuestionId, COUNT(o.MCQOptionId) AS OptionCount
-FROM TblMasterMCQ4Question q
-LEFT JOIN TblMasterMCQ6SetAnswerOption o ON o.MCQQuestionId = q.MCQQuestionId
-WHERE q.MCQSectionId = 566 AND q.IsDeleted = 0
-GROUP BY q.MCQQuestionId
-HAVING COUNT(o.MCQOptionId) < 2;

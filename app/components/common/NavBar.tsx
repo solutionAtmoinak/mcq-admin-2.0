@@ -11,6 +11,8 @@ import {
   MdAddCircleOutline,
   MdOutlineAssignment,
   MdOutlineDescription,
+  MdOutlineUploadFile,
+  MdOutlineSwapHoriz,
 } from "react-icons/md";
 
 type NavLeaf = {
@@ -76,6 +78,20 @@ const NAV_GROUPS: NavGroup[] = [
         icon: MdOutlineDescription,
         match: (p) => p === "/exam-templates",
       }
+    ],
+  },
+  {
+    eventKey: "migration",
+    label: "Migration",
+    icon: MdOutlineSwapHoriz,
+    items: [
+      {
+        eventKey: "migration-from-json",
+        href: "/migration/json",
+        label: "From JSON",
+        icon: MdOutlineUploadFile,
+        match: (p) => p === "/migration/json",
+      },
     ],
   },
 ];
