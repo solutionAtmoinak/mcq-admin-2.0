@@ -106,7 +106,7 @@ export function TablePagination({
             // (fully dynamic, uncached) route's Suspense boundary, remount
             // on every navigation, and immediately re-prefetch the exact
             // URL already on screen — see TablePagination self-link loop.
-            <span key={p} className={`${pillClass} bg-zinc-900 text-white`} aria-current="page">
+            <span key={p} className={`${pillClass} bg-brand text-white`} aria-current="page">
               {p}
             </span>
           ) : (

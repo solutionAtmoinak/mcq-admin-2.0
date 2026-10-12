@@ -49,7 +49,7 @@ export default function QuestionStatusBadge({
       showClass: { popup: "" },
       hideClass: { popup: "" },
       confirmButtonText: "Update status",
-      confirmButtonColor: "#18181b",
+      confirmButtonColor: "#4f46e5",
       cancelButtonText: "Cancel",
       preConfirm: () => {
         const select = document.getElementById("swal-status") as HTMLSelectElement | null;

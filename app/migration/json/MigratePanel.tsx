@@ -510,10 +510,6 @@ export default function MigratePanel() {
           </div>
 
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-violet-100 bg-violet-50/50 px-5 py-4">
-            <p className="text-xs text-zinc-500">
-              Mints a new Question Lot and inserts every row above in one transaction
-              (spMcqMigrationService, Mode 2). You&apos;ll get the Lot No back once it&apos;s done.
-            </p>
             <button
               type="button"
               onClick={handleConfirmImport}

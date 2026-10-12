@@ -6,7 +6,7 @@ GO
 -- Author:		<Author, DbTeam>
 -- Create date: <Create Date, 2024-03-10 13:09:25.567>
 -- Description:	<Description, storage purpose>
--- Modes 3-32 added by Claude Code (mcq-admin Prisma-removal migration) —
+-- Modes 3-32 and 34 added by Claude Code (mcq-admin Prisma-removal migration) —
 -- see mcq-admin/sql/spMcqTeacherService.sql in the repo for per-mode docs.
 -- (Mode 33, the one-off TblMasterMCQ4Question bulk migration, was removed
 -- from here — superseded by dbo.spMcqMigrationService's Mode 2.)
@@ -930,9 +930,17 @@ END
 if(@Mode = 19)
 BEGIN
     SET @output = (
-        SELECT 1 AS ID, 200 AS statuscode,
-        (SELECT Code, Name, Description FROM TestKind WHERE IsDeleted = 0 ORDER BY TestKindId FOR JSON PATH, INCLUDE_NULL_VALUES) AS response
-        FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER
+        SELECT 1 AS ID,
+           200 AS statuscode,
+           (
+                SELECT Code, Name, Description 
+                FROM TestKind 
+                WHERE IsDeleted = 0
+                AND FranchiseId = @FranchiseId or FranchiseId = 1
+                ORDER BY TestKindId 
+                FOR JSON PATH
+           ) AS response
+        FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
     );
     COMMIT RETURN;
 END
@@ -1751,6 +1759,71 @@ BEGIN
     COMMIT RETURN;
 END
 
+-- Mode 34: Dashboard analytics (app/lib/dashboard/data.ts's getDashboardAnalytics,
+-- the home page's charts). @json: {}. Franchise-scoped like every other mode.
+-- Deliberately cheap — plain COUNT/GROUP BY over indexed columns, no
+-- per-row work: exam totals by Status (admin-authored exams only —
+-- IsPersonalized = 0, same exclusion as Mode 3), attempt/student totals, the
+-- 10 most-attempted exams, attempts per day for the last 14 days, question
+-- counts for every lot that has at least one question (with its CreatedOn), and the
+-- question difficulty spread. Status/difficulty come back as the raw numeric
+-- values; the app maps them to _InternalService labels (EXAM_STATUS /
+-- QUESTION_DIFFICULTY) so no status code is hardcoded here. Reuses
+-- @StartOfDay as the 14-day window start.
+if(@Mode = 34)
+BEGIN
+    SET @StartOfDay = DATEADD(DAY, -13, CAST(GETDATE() AS DATE))
+
+    SET @output = (
+        SELECT 1 AS ID, 200 AS statuscode,
+        (
+            SELECT
+                (SELECT COUNT(*) FROM MockTest WHERE IsDeleted = 0 AND IsPersonalized = 0 AND FranchiseId = @FranchiseId) AS TotalExams,
+                (SELECT COUNT(*) FROM Attempt a JOIN MockTest m ON m.MockTestId = a.MockTestId
+                    WHERE a.IsDeleted = 0 AND m.IsDeleted = 0 AND m.IsPersonalized = 0 AND m.FranchiseId = @FranchiseId) AS TotalAttempts,
+                (SELECT COUNT(DISTINCT a.StudentId) FROM Attempt a JOIN MockTest m ON m.MockTestId = a.MockTestId
+                    WHERE a.IsDeleted = 0 AND m.IsDeleted = 0 AND m.IsPersonalized = 0 AND m.FranchiseId = @FranchiseId) AS TotalStudents,
+                (SELECT COUNT(*) FROM QuestionLot WHERE IsDeleted = 0 AND FranchiseId = @FranchiseId) AS TotalLots,
+                JSON_QUERY((
+                    SELECT Status, COUNT(*) AS Count FROM MockTest
+                    WHERE IsDeleted = 0 AND IsPersonalized = 0 AND FranchiseId = @FranchiseId
+                    GROUP BY Status ORDER BY Status FOR JSON PATH, INCLUDE_NULL_VALUES
+                )) AS ExamsByStatus,
+                JSON_QUERY((
+                    SELECT TOP 10 m.Name, m.Code, COUNT(*) AS Attempts, COUNT(DISTINCT a.StudentId) AS Students
+                    FROM Attempt a JOIN MockTest m ON m.MockTestId = a.MockTestId
+                    WHERE a.IsDeleted = 0 AND m.IsDeleted = 0 AND m.IsPersonalized = 0 AND m.FranchiseId = @FranchiseId
+                    GROUP BY m.MockTestId, m.Name, m.Code
+                    ORDER BY COUNT(*) DESC FOR JSON PATH, INCLUDE_NULL_VALUES
+                )) AS TopExams,
+                JSON_QUERY((
+                    SELECT CONVERT(VARCHAR(10), CAST(a.StartedOn AS DATE), 23) AS Day, COUNT(*) AS Count
+                    FROM Attempt a JOIN MockTest m ON m.MockTestId = a.MockTestId
+                    WHERE a.IsDeleted = 0 AND m.IsDeleted = 0 AND m.IsPersonalized = 0 AND m.FranchiseId = @FranchiseId
+                      AND a.StartedOn >= @StartOfDay
+                    GROUP BY CAST(a.StartedOn AS DATE)
+                    ORDER BY CAST(a.StartedOn AS DATE) FOR JSON PATH, INCLUDE_NULL_VALUES
+                )) AS AttemptsByDay,
+                JSON_QUERY((
+                    SELECT ql.LotNo, ql.CreatedOn, COUNT(q.QuestionId) AS Count
+                    FROM QuestionLot ql
+                    JOIN Question q ON q.LotId = ql.LotId AND q.IsDeleted = 0 AND q.FranchiseId = @FranchiseId
+                    WHERE ql.IsDeleted = 0 AND ql.FranchiseId = @FranchiseId
+                    GROUP BY ql.LotId, ql.LotNo, ql.CreatedOn
+                    ORDER BY ql.CreatedOn DESC FOR JSON PATH, INCLUDE_NULL_VALUES
+                )) AS Lots,
+                JSON_QUERY((
+                    SELECT Difficulty, COUNT(*) AS Count FROM Question
+                    WHERE IsDeleted = 0 AND FranchiseId = @FranchiseId
+                    GROUP BY Difficulty ORDER BY Difficulty FOR JSON PATH, INCLUDE_NULL_VALUES
+                )) AS ByDifficulty
+            FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER
+        ) AS response
+        FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER
+    );
+    COMMIT RETURN;
+END
+
 END
 COMMIT TRANSACTION
 
@@ -1759,19 +1832,19 @@ COMMIT TRANSACTION
         ROLLBACK TRANSACTION -- Rollback transaction in case of error
 
         -- Insert error details into the DatabaseError table
-        -- INSERT INTO DatabaseError (Error_State, Error_Line, ERROR_MESSAGE, ERROR_PROCEDURE, DateOfError, FranchiseId, IpAddress, jsonData, Mode, UserId)
-        -- VALUES (
-        --     ERROR_STATE(),
-        --     ERROR_LINE(),
-        --     ERROR_MESSAGE(),
-        --     ERROR_PROCEDURE(),
-        --     GETDATE(),
-        --     @FranchiseId,
-        --     @IP,
-        --     @json,
-        --     @Mode,
-        --     @UserId
-        -- );
+        INSERT INTO DatabaseError (Error_State, Error_Line, ERROR_MESSAGE, ERROR_PROCEDURE, DateOfError, FranchiseId, IpAddress, jsonData, Mode, UserId)
+        VALUES (
+            ERROR_STATE(),
+            ERROR_LINE(),
+            ERROR_MESSAGE(),
+            ERROR_PROCEDURE(),
+            GETDATE(),
+            @FranchiseId,
+            @IP,
+            @json,
+            @Mode,
+            @UserId
+        );
 
 		SET @output = JSON_QUERY((select 0 as ID, 400 as StatusCode, ERROR_MESSAGE() as response FOR JSON PATH, WITHOUT_ARRAY_WRAPPER));
     END CATCH

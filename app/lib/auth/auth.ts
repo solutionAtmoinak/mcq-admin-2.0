@@ -11,12 +11,7 @@ const AUTH_COOKIE = "dth_token";
 // lifetime matches the token's, without needing the signing secret.
 function getTokenExpiry(token: string): Date | undefined {
   try {
-    const payload = token.split(".")[1];
-    const { exp } = JSON.parse(
-      Buffer.from(payload, "base64url").toString("utf8"),
-    ) as {
-      exp?: number;
-    };
+    const { exp } = jwtDecode(token) as { exp?: number };
     return exp ? new Date(exp * 1000) : undefined;
   } catch {
     return undefined;

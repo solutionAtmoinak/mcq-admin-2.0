@@ -76,7 +76,7 @@ export default async function QuestionsPage({
         </div>
         <Link
           href="/questions/new"
-          className="rounded-md bg-zinc-900 px-4 py-2 text-sm font-semibold text-white hover:bg-zinc-700"
+          className="rounded-md bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-hover"
         >
           + Create Questions
         </Link>
@@ -124,7 +124,7 @@ export default async function QuestionsPage({
         <input type="hidden" name="q" defaultValue={params.q} />
         <button
           type="submit"
-          className="col-span-2 inline-flex items-center justify-center gap-2 rounded-md bg-zinc-900 px-4 py-1.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-zinc-700 sm:col-span-1 w-fit"
+          className="col-span-2 inline-flex items-center justify-center gap-2 rounded-md bg-brand px-4 py-1.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-brand-hover sm:col-span-1 w-fit"
         >
           <FiSearch size={14} />
           Search

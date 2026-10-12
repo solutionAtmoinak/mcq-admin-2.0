@@ -1,5 +1,9 @@
 @import "tailwindcss";
 
+/* Make Tailwind's dark: variant follow <html data-theme="dark"> (next-themes)
+   instead of the OS preference. */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
 :root {
   --background: #ffffff;
   --foreground: #171717;
@@ -8,14 +12,26 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  /* Brand accent = Tailwind indigo-600. Use bg-brand / text-brand /
+     hover:bg-brand-hover instead of hard-coding a palette so the accent can
+     be changed in one place. */
+  --color-brand: var(--color-indigo-600);
+  --color-brand-hover: var(--color-indigo-700);
+  --color-brand-soft: var(--color-indigo-50);
+  --font-sans: var(--font-nunito), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans);
+}
+
+/* rsuite sets its own font stack on its components (--rs-font-family-base);
+   point it at the app font so pickers, buttons and inputs match. */
+:root {
+  --rs-font-family-base: var(--font-sans);
 }
 
 /* Scrollbars styled to match the app's zinc/monochrome theme instead of the
@@ -23,7 +39,7 @@ body {
    table overflow wrappers, dropdown menus, modals) looks consistent. */
 * {
   scrollbar-width: thin;
-  scrollbar-color: #d4d4d8 transparent;
+  scrollbar-color: var(--color-zinc-300) transparent;
 }
 
 *::-webkit-scrollbar {
@@ -36,14 +52,14 @@ body {
 }
 
 *::-webkit-scrollbar-thumb {
-  background-color: #d4d4d8;
+  background-color: var(--color-zinc-300);
   border-radius: 9999px;
   border: 2px solid transparent;
   background-clip: padding-box;
 }
 
 *::-webkit-scrollbar-thumb:hover {
-  background-color: #a1a1aa;
+  background-color: var(--color-zinc-400);
 }
 
 *::-webkit-scrollbar-corner {
@@ -74,4 +90,157 @@ body {
 :root {
   --rs-zindex-picker-popup: 60;
   --rs-zindex-dropdown: 60;
+}
+
+/* ---- Brand: indigo-600 ----------------------------------------------------
+   rsuite's own primary scale (buttons, active nav item, focus rings, pickers,
+   toggles) re-pointed at Tailwind's indigo palette, 500 = indigo-600 so
+   rsuite's primary button matches the app's own bg-brand buttons. */
+:root,
+html[data-theme="light"] {
+  --rs-primary-50: #eef2ff;
+  --rs-primary-100: #e0e7ff;
+  --rs-primary-200: #c7d2fe;
+  --rs-primary-300: #a5b4fc;
+  --rs-primary-400: #818cf8;
+  --rs-primary-500: #4f46e5;
+  --rs-primary-600: #4338ca;
+  --rs-primary-700: #3730a3;
+  --rs-primary-800: #312e81;
+  --rs-primary-900: #1e1b4b;
+}
+
+/* ---- Dark theme -------------------------------------------------------------
+   Switched by <html data-theme="dark"> (see ThemeToggle + the inline script in
+   layout.tsx). rsuite ships its own [data-theme=dark] palette; for the app's
+   Tailwind classes we invert the zinc scale instead of touching every
+   component, so text-zinc-900 becomes near-white, bg-zinc-50 becomes the dark
+   page background, and so on. `bg-white` is overridden per class rather than
+   by redefining --color-white, so `text-white` on brand buttons stays white. */
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --background: #131316;
+  --foreground: #f4f4f5;
+  --surface: #1f1f23;
+
+  --color-zinc-50: #131316;
+  --color-zinc-100: #1c1c20;
+  --color-zinc-200: #2e2e34;
+  --color-zinc-300: #3f3f46;
+  --color-zinc-400: #71717a;
+  --color-zinc-500: #9a9aa4;
+  --color-zinc-600: #a1a1aa;
+  --color-zinc-700: #d4d4d8;
+  --color-zinc-800: #e4e4e7;
+  --color-zinc-900: #f4f4f5;
+  --color-zinc-950: #fafafa;
+
+  --rs-primary-50: #1e1b4b;
+  --rs-primary-100: #312e81;
+  --rs-primary-200: #3730a3;
+  --rs-primary-300: #4338ca;
+  --rs-primary-400: #4f46e5;
+  --rs-primary-500: #6366f1;
+  --rs-primary-600: #818cf8;
+  --rs-primary-700: #a5b4fc;
+  --rs-primary-800: #c7d2fe;
+  --rs-primary-900: #e0e7ff;
+}
+
+html[data-theme="dark"] .bg-white {
+  background-color: var(--surface);
+}
+
+html[data-theme="dark"] .bg-white\/80,
+html[data-theme="dark"] .bg-white\/90 {
+  background-color: color-mix(in srgb, var(--surface) 90%, transparent);
+}
+
+/* Smoother sidebar collapse: rsuite's default 0.15s ease-in feels abrupt, so
+   the sidebar/sidenav width transitions use the same 0.3s curve as the
+   label fades in NavBar.tsx. */
+.rs-sidebar,
+.rs-sidenav {
+  --rs-sidebar-collapse-transition: 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  --rs-sidenav-collapse-transition: 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ---- Side navigation -------------------------------------------------------
+   Themed through the same zinc/indigo tokens as the rest of the app, so it
+   follows light/dark automatically. Soft pill items, a brand-tinted active
+   state with an accent bar, and a subtle hover. */
+.app-sidenav {
+  --rs-sidenav-default-bg: transparent;
+  --rs-sidenav-default-text: var(--color-zinc-600);
+  --rs-sidenav-default-hover-bg: var(--color-zinc-100);
+  --rs-sidenav-default-hover-text: var(--color-zinc-900);
+  --rs-sidenav-default-selected-bg: color-mix(
+    in srgb,
+    var(--color-indigo-600) 12%,
+    transparent
+  );
+  --rs-sidenav-default-selected-text: var(--color-indigo-600);
+  --rs-sidenav-nav-rounded: 10px;
+  --rs-sidenav-item-transition:
+    color 0.1s ease-in-out, background-color 0.1s ease-in-out;
+}
+
+html[data-theme="dark"] .app-sidenav {
+  --rs-sidenav-default-selected-bg: color-mix(
+    in srgb,
+    var(--color-indigo-500) 20%,
+    transparent
+  );
+  --rs-sidenav-default-selected-text: var(--color-indigo-300);
+}
+
+.app-sidenav .rs-sidenav-item {
+  position: relative;
+  font-weight: 500;
+}
+
+.app-sidenav .rs-sidenav-item[data-active="true"] {
+  font-weight: 600;
+}
+
+.app-sidenav .rs-sidenav-item[data-active="true"]::before {
+  content: "";
+  position: absolute;
+  right: 0;
+  top: 22%;
+  bottom: 22%;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--color-indigo-600);
+}
+
+html[data-theme="dark"]
+  .app-sidenav
+  .rs-sidenav-item[data-active="true"]::before {
+  background: var(--color-indigo-400);
+}
+
+/* Sidebar chrome + toggle */
+.app-sidenav .rs-sidenav-header {
+  border-color: var(--color-zinc-200);
+}
+
+.app-sidenav .rs-sidenav-toggle {
+  border-color: var(--color-zinc-200);
+  color: var(--color-zinc-500);
+}
+
+/* Sidebar logo/title: invisible for 150ms while the sidebar widens, then a
+   quick fade-in. `both` keeps it at opacity 0 during the delay. */
+@keyframes nav-brand-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.nav-brand-in {
+  animation: nav-brand-in 250ms ease-out 200ms both;
 }

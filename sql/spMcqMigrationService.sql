@@ -21,7 +21,7 @@ BEGIN TRY
 BEGIN TRANSACTION
 
 DECLARE
-@SectionId INT, @ExtractedJson NVARCHAR(MAX),
+@SectionId INT, @ExtractedJson NVARCHAR(MAX), @QuestionIdsJson NVARCHAR(MAX),
 @LotIdText NVARCHAR(50), @LotId BIGINT,
 @QuestionsJson NVARCHAR(MAX), @Total INT,
 @RowNo INT, @MaxRowNo INT, @CurCode NVARCHAR(50), @CurTypeCode VARCHAR(50), @CurTypeId INT,
@@ -44,17 +44,27 @@ BEGIN
     
 
 -- Mode 1: Extract one legacy section's questions as Mode 2-ready JSON
--- (extractBySectionId). @json: {"SectionId": <int>}. Read-only. Parameterized
--- version of mcq-admin/sql/migrate-section-566-preview.sql — see that file
--- for the full row-shape rationale (passage text folded into stem, media
--- resolved via GetDocumentPath and defaulted to kind "image", tags filed
--- under dimension "Chapter", TypeCode derived from IsMultipleCorrect so a
--- section with genuine multi-answer questions maps to "msq" instead of
--- always "mcq_single", Difficulty fixed at 3 since the legacy schema has no
+-- (extractBySectionId). @json: {"SectionId": <int>, "QuestionIds":
+-- [<bigint>, ...] | null}. Read-only. Parameterized version of
+-- mcq-admin/sql/migrate-section-566-preview.sql — see that file for the
+-- full row-shape rationale (passage text folded into stem, media resolved
+-- via GetDocumentPath and defaulted to kind "image", tags filed under
+-- dimension "Chapter", TypeCode derived from IsMultipleCorrect so a section
+-- with genuine multi-answer questions maps to "msq" instead of always
+-- "mcq_single", Difficulty fixed at 3 since the legacy schema has no
 -- difficulty concept). PresentationJson/AnswerJson/TagsJson come back as
 -- JSON-TEXT STRINGS (not nested JSON) inside the response array, matching
 -- exactly what Mode 2 expects verbatim and what the admin UI's
 -- ImportWorkspace.tsx JSON.parse()s per row.
+--
+-- QuestionIds is optional and additive: when present, BaseQ is further
+-- restricted to just those ids (still scoped to @SectionId, still behind
+-- the same franchise permission check below) instead of the whole section.
+-- Large sections (1000+ questions) time out building the full per-row JSON
+-- in one call — the admin UI's ExtractPanel first calls Mode 3 (cheap:
+-- just MCQQuestionId, no joins) to get the full id list, then calls this
+-- mode once per page-sized chunk of ids, so each call only has to build
+-- JSON for a page's worth of rows.
 if(@Mode = 1)
 BEGIN
     SELECT @SectionId = SectionId FROM OPENJSON(@json) WITH (SectionId INT)
@@ -79,6 +89,15 @@ BEGIN
         COMMIT RETURN;
     END
 
+    -- The .NET executor can hand a nested array over as a JSON *string*
+    -- instead of a real array (same quirk Mode 2 handles for Questions) —
+    -- accept either form.
+    SET @QuestionIdsJson = NULL
+    SELECT @QuestionIdsJson = Q FROM OPENJSON(@json) WITH (Q NVARCHAR(MAX) '$.QuestionIds' AS JSON)
+    IF @QuestionIdsJson IS NULL
+        SELECT @QuestionIdsJson = Q FROM OPENJSON(@json) WITH (Q NVARCHAR(MAX) '$.QuestionIds')
+    IF @QuestionIdsJson IS NOT NULL AND ISJSON(@QuestionIdsJson) = 0 SET @QuestionIdsJson = NULL
+
     -- The CTE chain below must be a single top-level statement (a WITH
     -- clause can't be nested inside another expression's parentheses), so it
     -- assigns straight into @ExtractedJson; the {ID, statuscode, response}
@@ -99,6 +118,7 @@ BEGIN
         FROM DBDthLmsPro.dbo.TblMasterMCQ4Question q
         LEFT JOIN DBDthLmsPro.dbo.TblMasterMCQ5PassageDetail p ON p.MCQPassageId = q.MCQPassageId
         WHERE q.MCQSectionId = @SectionId AND q.IsDeleted = 0
+          AND (@QuestionIdsJson IS NULL OR q.MCQQuestionId IN (SELECT TRY_CAST([value] AS BIGINT) FROM OPENJSON(@QuestionIdsJson)))
     ),
     Stem AS (
         SELECT
@@ -416,6 +436,47 @@ BEGIN
         SELECT 1 AS ID, 200 AS statuscode,
         (SELECT JSON_QUERY((SELECT Code, CAST(QuestionId AS VARCHAR(20)) AS QuestionId FROM @CreatedOutput ORDER BY QuestionId FOR JSON PATH)) AS Created FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER) AS response
         FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER
+    );
+    COMMIT RETURN;
+END
+
+if(@Mode = 3)
+begin
+    SELECT @SectionId = SectionId FROM OPENJSON(@json) WITH (SectionId INT)
+    IF @SectionId IS NULL
+    BEGIN
+        SET @output = (SELECT 1 AS ID, 400 AS statuscode, 'SectionId is required.' AS response FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER);
+        COMMIT RETURN;
+    END
+
+    IF NOT EXISTS (
+        select 1 from DBDTHLMSPro..TblMasterMCQ3Section ms
+        join DBDTHLMSPro..TblMasterMCQ2Paper mp on ms.MCQPaperId = mp.MCQPaperId
+        where mp.FranchiseId = @FranchiseId and MCQSectionId = @SectionId
+    )
+    BEGIN
+        SET @output = (
+            SELECT 0 AS ID,
+                400 AS statuscode,
+                'Not permitterd !!' AS response
+            FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
+        );
+        COMMIT RETURN;
+    END
+
+    SET @output = (
+        SELECT 1 AS ID,
+           200 AS statuscode,
+           (
+                select 
+                    MCQQuestionId 
+                from 
+                DBDTHLMSPro..TblMasterMCQ4Question
+                where MCQSectionId = @SectionId
+                and ISDeleted = 0
+                for json path
+           ) AS response
+        FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
     );
     COMMIT RETURN;
 END

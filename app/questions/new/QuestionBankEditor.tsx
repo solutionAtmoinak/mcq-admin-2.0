@@ -671,8 +671,8 @@ export default function QuestionBankEditor({
             <BackLink href="/questions" label="Back" />
             <h1 className="mt-2 text-2xl font-semibold text-zinc-900 mb-2">Create Questions</h1>
           </div>
-          <div className="flex w-full shrink-0 flex-col gap-2 rounded-lg bg-zinc-950 px-3 py-2 shadow shadow-black sm:flex-row sm:flex-wrap sm:items-center lg:w-fit">
-            <span className="text-xs font-semibold uppercase tracking-wide text-white sm:mr-1">
+          <div className="flex w-full shrink-0 flex-col gap-2 rounded-lg border border-indigo-200 bg-brand-soft px-3 py-2 sm:flex-row sm:flex-wrap sm:items-center lg:w-fit">
+            <span className="text-xs font-semibold uppercase tracking-wide text-brand sm:mr-1">
               Batch tools
             </span>
             <button className={buttonClass} onClick={() => setDefaultsOpen(true)}>
@@ -753,28 +753,28 @@ export default function QuestionBankEditor({
       </div>
 
       {/* Fixed bottom action bar */}
-      <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-zinc-800 py-3 pl-16 pr-6">
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-zinc-200 bg-white py-3 pl-16 pr-6">
         <div className="flex flex-wrap gap-2">
           <button
-            className="rounded-md border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-sm font-medium text-zinc-200 hover:bg-zinc-800"
+            className={buttonClass}
             onClick={addRow}
           >
             + Add row
           </button>
           <button
-            className="rounded-md border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-sm font-medium text-zinc-200 hover:bg-zinc-800"
+            className={buttonClass}
             onClick={() => addRows(5)}
           >
             + Add 5 rows
           </button>
         </div>
         <div className="flex items-center gap-4">
-          <span className="text-xs text-zinc-400">
+          <span className="text-xs text-zinc-500">
             {rows.length} question{rows.length === 1 ? "" : "s"} · {totalMarks} total marks
             {savedCount > 0 ? ` · ${savedCount} saved` : ""}
           </span>
           <button
-            className="rounded-md border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-sm font-medium text-zinc-200 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
+            className={primaryButtonClass}
             onClick={handleSaveAll}
             disabled={isPending || rows.length === savedCount}
           >
@@ -1281,7 +1281,7 @@ function QuestionRowCard({
     >
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2 border-b border-zinc-100 pb-2">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="flex px-2 py-1 items-center justify-center rounded-full bg-zinc-900 text-xs font-semibold text-white shadow shadow-black">
+          <span className="flex px-2 py-1 items-center justify-center rounded-full bg-brand text-xs font-semibold text-white">
             {index + 1}
           </span>
           {row.saved && (

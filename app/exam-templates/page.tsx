@@ -42,7 +42,7 @@ export default async function TemplatesPage() {
               >
                 <div>
                   <div className="flex items-start gap-3">
-                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-zinc-900 text-white">
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand text-white">
                       <FiFileText size={17} />
                     </span>
                     <div className="min-w-0">
@@ -77,19 +77,19 @@ export default async function TemplatesPage() {
             ) : (
               <div
                 key={t.templateId}
-                className="relative flex flex-col justify-between overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-50 p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-lg hover:shadow-zinc-900/20"
+                className="relative flex flex-col justify-between overflow-hidden rounded-2xl border border-indigo-500/40 bg-indigo-600/5 p-5 shadow-sm transition hover:-translate-y-0.5 hover:border-indigo-500 hover:shadow-md hover:shadow-indigo-600/20"
               >
-                <span className="absolute right-3 top-3 inline-flex items-center gap-1 rounded-full bg-white px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-zinc-900">
-                  <FiShield size={10} fill="true" className="text-slate-600" /> Master
+                <span className="absolute right-3 top-3 inline-flex items-center gap-1 rounded-full bg-brand px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-white">
+                  <FiShield size={10} /> Master
                 </span>
 
                 <div>
                   <div className="flex items-start gap-3">
-                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-zinc-600 text-white">
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand text-white">
                       <FiFileText size={17} />
                     </span>
                     <div className="min-w-0 pr-16">
-                      <div className="truncate text-black font-semibold" title={t.name}>
+                      <div className="truncate font-semibold text-indigo-700 dark:text-indigo-300" title={t.name}>
                         {t.name}
                       </div>
                       <div className="mt-0.5 inline-flex items-center gap-1 text-xs text-zinc-400">
@@ -99,18 +99,18 @@ export default async function TemplatesPage() {
                     </div>
                   </div>
 
-                  <div className="mt-4 grid grid-cols-3 gap-2 rounded-xl bg-zinc-900 p-3">
+                  <div className="mt-4 grid grid-cols-3 gap-2 rounded-xl bg-indigo-600/10 p-3">
                     {stats.map(({ icon: Icon, value, label }) => (
                       <div key={label} className="flex flex-col items-center gap-1 text-center">
-                        <Icon size={13} className="text-zinc-500" />
-                        <div className="text-sm font-semibold text-zinc-100">{value}</div>
-                        <div className="text-[10px] uppercase tracking-wide text-zinc-500">{label}</div>
+                        <Icon size={13} className="text-indigo-500" />
+                        <div className="text-sm font-semibold text-zinc-900">{value}</div>
+                        <div className="text-[10px] uppercase tracking-wide text-indigo-500">{label}</div>
                       </div>
                     ))}
                   </div>
                 </div>
 
-                <div className="mt-4 border-t border-zinc-800 pt-3 text-center text-xs font-medium text-zinc-500">
+                <div className="mt-4 border-t border-indigo-500/20 pt-3 text-center text-xs font-medium text-indigo-500">
                   Master templates cannot be edited or deleted.
                 </div>
               </div>

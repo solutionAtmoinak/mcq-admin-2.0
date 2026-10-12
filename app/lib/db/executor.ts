@@ -79,11 +79,20 @@ export async function callStoredProcedure<T>(
   });
 
   if (res.status === 401) {
-    await clearAuthCookie();
+    // Cookies are read-only while a Server Component renders (this runs from
+    // page data loaders as well as Server Actions), so clearing in place can
+    // throw. In that case bounce the browser through /api/clear-cookie, a
+    // Route Handler that clears the cookie and then redirects to /login.
+    try {
+      await clearAuthCookie();
+    } catch {
+      redirect("/api/clear-cookie", RedirectType.replace);
+    }
     redirect("/login", RedirectType.replace);
   }
 
   const rawText = await res.text();
+  // console.log({ status: res.status, json: JSON.parse(rawText) });
   let body: HttpEnvelope | null = null;
   try {
     body = JSON.parse(rawText);
@@ -104,8 +113,8 @@ export async function callStoredProcedure<T>(
       msgText = errorMessages.join("<br/> ");
     } else {
       msgText =
-        errorMessages?.[0] ??
-        `Stored procedure call failed, ${spName}/${mode} `;
+        errorMessages?.join("<br/>") ||
+        `Stored procedure ${spName} mode ${mode} failed with status ${res.status}.`;
     }
     return msgText as T;
   }

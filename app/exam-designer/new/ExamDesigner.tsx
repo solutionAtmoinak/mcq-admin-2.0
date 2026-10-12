@@ -107,7 +107,7 @@ export default function ExamDesigner({
       confirmButtonText: "Auto-remove extra (from last)",
       denyButtonText: "Keep them, I'll remove manually",
       cancelButtonText: "Cancel",
-      confirmButtonColor: "#18181b",
+      confirmButtonColor: "#4f46e5",
       denyButtonColor: "#71717a",
       cancelButtonColor: "#ff0000",
       reverseButtons: true,

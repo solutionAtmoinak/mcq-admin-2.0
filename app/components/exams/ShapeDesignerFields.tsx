@@ -161,7 +161,7 @@ export default function ShapeDesignerFields({
               <button
                 type="button"
                 onClick={() => setTestKindInfoOpen(true)}
-                className="inline-flex  shrink-0 items-center justify-center rounded-full text-white bg-zinc-800 p-1 shadow shadow-black cursor-help"
+                className="inline-flex  shrink-0 items-center justify-center rounded-full text-white bg-brand p-1 cursor-help"
                 title="What do the test kinds mean?"
                 aria-label="What do the test kinds mean?"
               >
@@ -174,7 +174,7 @@ export default function ShapeDesignerFields({
             <label className={labelClass}>Total of each section time (min)</label>
             {/* Derived from the sections' own times below — never typed in. */}
             <p
-              className="mt-2 font-bold text-slate-900"
+              className="mt-2 font-bold text-zinc-900"
               tabIndex={-1}
               title="Sum of every section's time"
             >{totals.durationMin}</p>

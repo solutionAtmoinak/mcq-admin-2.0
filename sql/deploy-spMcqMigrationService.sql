@@ -5,69 +5,36 @@ GO
 SET QUOTED_IDENTIFIER ON
 GO
 -- =============================================
--- Author:		Claude Code (mcq-admin migration tooling)
--- Create date: 2026-09-30
+-- Author:		<Author, DbTeam>
+-- Create date: <Create Date, 2024-03-10 13:09:25.567>
 -- Description:	Dedicated migration-only stored procedure — see
 --              mcq-admin/sql/spMcqMigrationService.sql (the reference/backup
 --              copy) for full per-mode documentation. Mirror every change
 --              into both files.
 -- =============================================
 
--- dbo.spMcqMigrationService (database: DBDTHMCQPRO) — a dedicated,
--- migration-only stored procedure, separate from dbo.spMcqTeacherService, so
--- one-off bulk-migration logic (uncapped batch sizes, cross-database reads
--- into the legacy DB) never has to live alongside the production
--- teacher-facing SP. Called through the same .NET backend generic executor,
--- same connection index as spMcqTeacherService/spHelperService (proven by
--- spHelperService already sharing index 8 in this same database):
---   POST {API_ENDPOINT_URL}/AuthDataGet/DExecuteJson/8/spMcqMigrationService/<mode>
---   Authorization: Bearer <admin JWT>
---   body: JSON.stringify(<params object, becomes @json>)
--- See mcq-admin/app/lib/db/executor.ts's callStoredProcedure /
--- migrationService.ts's callMigrationService for the caller.
---
--- Modes:
---   1 — extractBySectionId: reads the legacy TblMasterMCQ4Question tree
---       (DBDthLmsPro, the same database GetDocumentPath lives in — NOT a
---       separate old database) for one MCQSectionId and returns a JSON array
---       already shaped to Mode 2's input contract (LegacyQuestionId,
---       TypeCode, Difficulty, Marks, Negative, PresentationJson, AnswerJson,
---       SearchText, TagsJson). Read-only — no transaction needed, but still
---       wrapped in the same TRY/CATCH shape as every other mode for a
---       uniform error envelope.
---   2 — createQuestionsBulk: bulk-create questions with no batch-size cap,
---       for one-off migrations. Identical logic to spMcqTeacherService's
---       Mode 13 (createQuestions) minus its 200-row cap — see that file's
---       Mode 13 header for the full write-path description (Question +
---       QuestionVersion + find-or-create TagDimension/Tag/QuestionTag +
---       QuestionSearch + QuestionStat). Moved here from spMcqTeacherService's
---       former Mode 33 so migration-only logic doesn't live in the
---       production teacher SP; Mode 33 was left in place there (deployed,
---       unused) rather than torn out.
-
 CREATE OR ALTER PROCEDURE [dbo].[spMcqMigrationService]
     @Mode int = 0,
-    @IP VARCHAR(20) = NULL,
-    @UserId NVARCHAR(450) = NULL,
-    @FranchiseId int = 0,
-    @json NVARCHAR(MAX) = NULL,
-    @output NVARCHAR(MAX) OUTPUT
+	@IP VARCHAR(20) = NULL,
+	@UserId NVARCHAR(450) = NULL,
+	@FranchiseId int = 0,
+	@json NVARCHAR(MAX) = NULL,
+    @output Nvarchar(max) OUTPUT
 AS
 BEGIN
 BEGIN TRY
 BEGIN TRANSACTION
 
-BEGIN
 DECLARE
-    @SectionId INT, @ExtractedJson NVARCHAR(MAX),
-    @LotIdText NVARCHAR(50), @LotId BIGINT,
-    @QuestionsJson NVARCHAR(MAX), @Total INT,
-    @RowNo INT, @MaxRowNo INT, @CurCode NVARCHAR(50), @CurTypeCode VARCHAR(50), @CurTypeId INT,
-    @CurDifficulty TINYINT, @CurStatus INT, @CurEstSolveSec SMALLINT, @CurPresentationJson NVARCHAR(MAX),
-    @CurAnswerJson NVARCHAR(MAX), @CurSearchText NVARCHAR(MAX), @CurTagsJson NVARCHAR(MAX),
-    @NewQuestionId BIGINT, @NewVersionId BIGINT, @ContentHash CHAR(64), @CodeAttempts INT,
-    @TagRowNo INT, @TagMaxRowNo INT, @TagKey NVARCHAR(200), @TagValue NVARCHAR(200),
-    @DimensionId INT, @DimCode VARCHAR(50), @TagId BIGINT, @ApprovedStatus INT;
+@SectionId INT, @ExtractedJson NVARCHAR(MAX), @QuestionIdsJson NVARCHAR(MAX),
+@LotIdText NVARCHAR(50), @LotId BIGINT,
+@QuestionsJson NVARCHAR(MAX), @Total INT,
+@RowNo INT, @MaxRowNo INT, @CurCode NVARCHAR(50), @CurTypeCode VARCHAR(50), @CurTypeId INT,
+@CurDifficulty TINYINT, @CurStatus INT, @CurEstSolveSec SMALLINT, @CurPresentationJson NVARCHAR(MAX),
+@CurAnswerJson NVARCHAR(MAX), @CurSearchText NVARCHAR(MAX), @CurTagsJson NVARCHAR(MAX),
+@NewQuestionId BIGINT, @NewVersionId BIGINT, @ContentHash CHAR(64), @CodeAttempts INT,
+@TagRowNo INT, @TagMaxRowNo INT, @TagKey NVARCHAR(200), @TagValue NVARCHAR(200),
+@DimensionId INT, @DimCode VARCHAR(50), @TagId BIGINT, @ApprovedStatus INT;
 
 -- T-SQL does not allow a TABLE variable declaration inside the same
 -- comma-separated DECLARE list as scalar variables — each one needs its
@@ -77,18 +44,30 @@ DECLARE @TagInput TABLE (RowNo INT IDENTITY(1,1), TagKey NVARCHAR(200), TagValue
 DECLARE @CreatedOutput TABLE (Code VARCHAR(50), QuestionId BIGINT);
 DECLARE @NewId TABLE (Id BIGINT);
 
+BEGIN
+
 -- Mode 1: Extract one legacy section's questions as Mode 2-ready JSON
--- (extractBySectionId). @json: {"SectionId": <int>}. Read-only. Parameterized
--- version of mcq-admin/sql/migrate-section-566-preview.sql — see that file
--- for the full row-shape rationale (passage text folded into stem, media
--- resolved via GetDocumentPath and defaulted to kind "image", tags filed
--- under dimension "Chapter", TypeCode derived from IsMultipleCorrect so a
--- section with genuine multi-answer questions maps to "msq" instead of
--- always "mcq_single", Difficulty fixed at 3 since the legacy schema has no
+-- (extractBySectionId). @json: {"SectionId": <int>, "QuestionIds":
+-- [<bigint>, ...] | null}. Read-only. Parameterized version of
+-- mcq-admin/sql/migrate-section-566-preview.sql — see that file for the
+-- full row-shape rationale (passage text folded into stem, media resolved
+-- via GetDocumentPath and defaulted to kind "image", tags filed under
+-- dimension "Chapter", TypeCode derived from IsMultipleCorrect so a section
+-- with genuine multi-answer questions maps to "msq" instead of always
+-- "mcq_single", Difficulty fixed at 3 since the legacy schema has no
 -- difficulty concept). PresentationJson/AnswerJson/TagsJson come back as
 -- JSON-TEXT STRINGS (not nested JSON) inside the response array, matching
 -- exactly what Mode 2 expects verbatim and what the admin UI's
 -- ImportWorkspace.tsx JSON.parse()s per row.
+--
+-- QuestionIds is optional and additive: when present, BaseQ is further
+-- restricted to just those ids (still scoped to @SectionId, still behind
+-- the same franchise permission check below) instead of the whole section.
+-- Large sections (1000+ questions) time out building the full per-row JSON
+-- in one call — the admin UI's ExtractPanel first calls Mode 3 (cheap:
+-- just MCQQuestionId, no joins) to get the full id list, then calls this
+-- mode once per page-sized chunk of ids, so each call only has to build
+-- JSON for a page's worth of rows.
 if(@Mode = 1)
 BEGIN
     SELECT @SectionId = SectionId FROM OPENJSON(@json) WITH (SectionId INT)
@@ -97,6 +76,30 @@ BEGIN
         SET @output = (SELECT 1 AS ID, 400 AS statuscode, 'SectionId is required.' AS response FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER);
         COMMIT RETURN;
     END
+
+    IF NOT EXISTS (
+        select 1 from DBDTHLMSPro..TblMasterMCQ3Section ms
+        join DBDTHLMSPro..TblMasterMCQ2Paper mp on ms.MCQPaperId = mp.MCQPaperId
+        where mp.FranchiseId = @FranchiseId and MCQSectionId = @SectionId
+    )
+    BEGIN
+        SET @output = (
+            SELECT 0 AS ID,
+                400 AS statuscode,
+                'Not permitterd !!' AS response
+            FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
+        );
+        COMMIT RETURN;
+    END
+
+    -- The .NET executor can hand a nested array over as a JSON *string*
+    -- instead of a real array (same quirk Mode 2 handles for Questions) —
+    -- accept either form.
+    SET @QuestionIdsJson = NULL
+    SELECT @QuestionIdsJson = Q FROM OPENJSON(@json) WITH (Q NVARCHAR(MAX) '$.QuestionIds' AS JSON)
+    IF @QuestionIdsJson IS NULL
+        SELECT @QuestionIdsJson = Q FROM OPENJSON(@json) WITH (Q NVARCHAR(MAX) '$.QuestionIds')
+    IF @QuestionIdsJson IS NOT NULL AND ISJSON(@QuestionIdsJson) = 0 SET @QuestionIdsJson = NULL
 
     -- The CTE chain below must be a single top-level statement (a WITH
     -- clause can't be nested inside another expression's parentheses), so it
@@ -118,6 +121,7 @@ BEGIN
         FROM DBDthLmsPro.dbo.TblMasterMCQ4Question q
         LEFT JOIN DBDthLmsPro.dbo.TblMasterMCQ5PassageDetail p ON p.MCQPassageId = q.MCQPassageId
         WHERE q.MCQSectionId = @SectionId AND q.IsDeleted = 0
+          AND (@QuestionIdsJson IS NULL OR q.MCQQuestionId IN (SELECT TRY_CAST([value] AS BIGINT) FROM OPENJSON(@QuestionIdsJson)))
     ),
     Stem AS (
         SELECT
@@ -168,19 +172,51 @@ BEGIN
         JOIN DBDthLmsPro.dbo.TblMasterMCQ7SetCorrectAnswer c ON c.MCQOptionId = o.MCQOptionId
         GROUP BY o.MCQQuestionId
     ),
-    TagsJsonCte AS (
+    TagsJson AS (
         SELECT
-            t.QuestionId AS MCQQuestionId,
+            q.MCQQuestionId,
+            JSON_QUERY(
             (
-                SELECT N'Chapter' AS [Key], t2.TagName AS [Value]
-                FROM DBDthLmsPro.dbo.TblMasterMCQ9QuestionTags t2
-                WHERE t2.QuestionId = t.QuestionId
-                  AND t2.IsDeleted = 0
-                  AND NULLIF(LTRIM(RTRIM(t2.TagName)), N'') IS NOT NULL
+                SELECT DISTINCT
+                    x.[Key],
+                    x.[Value]
+                FROM
+                (
+                    -- Question Tags
+                    SELECT
+                        N'Tag' AS [Key],
+                        t.TagName AS [Value]
+                    FROM DBDTHLMSPro.dbo.TblMasterMCQ9QuestionTags t
+                    WHERE t.QuestionId = q.MCQQuestionId
+                    AND t.IsDeleted = 0
+                    AND NULLIF(LTRIM(RTRIM(t.TagName)), N'') IS NOT NULL
+
+                    UNION ALL
+
+                    -- Chapter information
+                    SELECT
+                        v.[Key],
+                        v.[Value]
+                    FROM DBDTHLMSPro.dbo.tblMasterMCQ10Chapter c
+                    LEFT JOIN DBDTHLMSPro.dbo.tblMasterSectionChapters ch
+                        ON ch.SectionChapterId = c.ChapterId
+                    LEFT JOIN DBDTHLMSPro.dbo.tblMasterSectionChapters parent
+                        ON parent.SectionChapterId = c.MasterParentId
+                    CROSS APPLY
+                    (
+                        VALUES
+                            (N'ChapterId',        CONVERT(nvarchar(20), c.ChapterId)),
+                            (N'ChapterName',      NULLIF(TRIM(ch.SectionChapterName), N'')),
+                            (N'MasterParentId',   CONVERT(nvarchar(20), c.MasterParentId)),
+                            (N'MasterParentName', NULLIF(TRIM(parent.SectionChapterName), N''))
+                    ) v([Key], [Value])
+                    WHERE c.QuestionId = q.MCQQuestionId
+                    AND c.IsDeleted = 0
+                    AND v.[Value] IS NOT NULL
+                ) x
                 FOR JSON PATH
-            ) AS TagsArrayJson
-        FROM DBDthLmsPro.dbo.TblMasterMCQ9QuestionTags t
-        GROUP BY t.QuestionId
+            )) AS TagsArrayJson
+        FROM DBDTHLMSPro.dbo.TblMasterMCQ4Question q
     ),
     SearchWords AS (
         SELECT
@@ -235,7 +271,7 @@ BEGIN
         JOIN Stem s ON s.MCQQuestionId = q.MCQQuestionId
         LEFT JOIN OptionsJson oj ON oj.MCQQuestionId = q.MCQQuestionId
         LEFT JOIN CorrectLetters cl ON cl.MCQQuestionId = q.MCQQuestionId
-        LEFT JOIN TagsJsonCte tj ON tj.MCQQuestionId = q.MCQQuestionId
+        LEFT JOIN TagsJson tj ON tj.MCQQuestionId = q.MCQQuestionId
         LEFT JOIN SearchWords sw ON sw.MCQQuestionId = q.MCQQuestionId
         ORDER BY q.MCQQuestionId
         FOR JSON PATH
@@ -407,15 +443,79 @@ BEGIN
     COMMIT RETURN;
 END
 
+-- Mode 3: Cheap id-only lookup for one legacy section (listSectionQuestionIds).
+-- @json: {"SectionId": <int>}. Read-only. No joins across passage/option/
+-- answer/tag tables — just MCQQuestionId — so it never times out even for a
+-- section with 1000+ questions. Same franchise permission check as Mode 1.
+-- The admin UI's ExtractPanel calls this first to get the full id list and
+-- total count, then pages through them via Mode 1's QuestionIds filter.
+if(@Mode = 3)
+begin
+    SELECT @SectionId = SectionId FROM OPENJSON(@json) WITH (SectionId INT)
+    IF @SectionId IS NULL
+    BEGIN
+        SET @output = (SELECT 1 AS ID, 400 AS statuscode, 'SectionId is required.' AS response FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER);
+        COMMIT RETURN;
+    END
+
+    IF NOT EXISTS (
+        select 1 from DBDTHLMSPro..TblMasterMCQ3Section ms
+        join DBDTHLMSPro..TblMasterMCQ2Paper mp on ms.MCQPaperId = mp.MCQPaperId
+        where mp.FranchiseId = @FranchiseId and MCQSectionId = @SectionId
+    )
+    BEGIN
+        SET @output = (
+            SELECT 0 AS ID,
+                400 AS statuscode,
+                'Not permitterd !!' AS response
+            FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
+        );
+        COMMIT RETURN;
+    END
+
+    SET @output = (
+        SELECT 1 AS ID,
+           200 AS statuscode,
+           (
+                select
+                    MCQQuestionId
+                from
+                DBDTHLMSPro..TblMasterMCQ4Question
+                where MCQSectionId = @SectionId
+                and ISDeleted = 0
+                for json path
+           ) AS response
+        FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
+    );
+    COMMIT RETURN;
+END
+
 SET @output = (SELECT 1 AS ID, 400 AS statuscode, 'Unknown mode.' AS response FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER);
 COMMIT RETURN;
-END
 
+END
 COMMIT TRANSACTION
 
-END TRY
-BEGIN CATCH
-    ROLLBACK TRANSACTION
-    SET @output = JSON_QUERY((SELECT 0 AS ID, 400 AS StatusCode, ERROR_MESSAGE() AS response FOR JSON PATH, WITHOUT_ARRAY_WRAPPER));
-END CATCH
+    END TRY
+    BEGIN CATCH
+        ROLLBACK TRANSACTION -- Rollback transaction in case of error
+
+        -- Insert error details into the DatabaseError table
+        INSERT INTO DatabaseError (Error_State, Error_Line, ERROR_MESSAGE, ERROR_PROCEDURE, DateOfError, FranchiseId, IpAddress, jsonData, Mode, UserId)
+        VALUES (
+            ERROR_STATE(),
+            ERROR_LINE(),
+            ERROR_MESSAGE(),
+            ERROR_PROCEDURE(),
+            GETDATE(),
+            @FranchiseId,
+            @IP,
+            @json,
+            @Mode,
+            @UserId
+        );
+
+		SET @output = JSON_QUERY((select 0 as ID, 400 as StatusCode, ERROR_MESSAGE() as response FOR JSON PATH, WITHOUT_ARRAY_WRAPPER));
+    END CATCH
 END
+GO

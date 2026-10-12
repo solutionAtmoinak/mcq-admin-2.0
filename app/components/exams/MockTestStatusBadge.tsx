@@ -44,7 +44,7 @@ export default function MockTestStatusBadge({
       showClass: { popup: "" },
       hideClass: { popup: "" },
       confirmButtonText: "Update status",
-      confirmButtonColor: "#18181b",
+      confirmButtonColor: "#4f46e5",
       cancelButtonText: "Cancel",
       preConfirm: () => {
         const select = document.getElementById("swal-mocktest-status") as HTMLSelectElement | null;

@@ -1,108 +1,113 @@
--- dbo.spMcqTeacherService (database: DBDTHMCQPRO) — the admin/teacher-side
--- counterpart to student-portal/sql/spMcqStudentService.sql, called the same
--- way, through the .NET backend's generic executor, never a direct DB
--- connection from mcq-admin:
---   POST {API_ENDPOINT_URL}/AuthDataGet/DExecuteJson/8/spMcqTeacherService/<mode>
---   Authorization: Bearer <admin JWT>
---   body: JSON.stringify(<params object, becomes @json>)
--- See mcq-admin/app/lib/db/teacherService.ts's callTeacherService for the
--- caller and the {isSuccess, errorMessages, statusCode, result} /
--- {ID, statuscode, response} unwrapping contract (identical to
--- studentService.ts's callStudentService).
---
--- Modes 1-2 already exist on the deployed procedure (created outside this
--- repo) — their bodies aren't reproduced here. This file documents ONLY the
--- Mode 3 addition below. Whoever applies this: merge the DECLARE block
--- into the procedure's single existing top-level DECLARE list (dedupe any
--- names already declared there — @Page/@PageSize/@Total are new, safe to
--- add as-is unless already taken), and insert the `IF (@Mode = 3)` block
--- alongside the existing mode blocks. Per explicit convention for this
--- procedure (unlike spMcqStudentService's per-mode-suffixed variables):
--- every variable is declared ONCE at the top, in one shared list, and
--- reused by name across modes rather than re-declared with a per-mode
--- suffix — a later mode that also needs a page/pageSize or a resolved
--- EXAM_STATUS value should reuse @Page/@PageSize/@PublishedStatus here
--- rather than declaring new ones.
---
--- Mode 3: Exam list — admin's "Design Exam" page
--- (app/exam-designer/page.tsx via app/lib/exams/data.ts's listMockTests).
--- @json: {"Page": <int>, "PageSize": <int>} (both optional — default to
--- page 1 / 20 rows). Franchise-scoped via @FranchiseId, which the .NET
--- executor resolves from the signed-in admin's JWT itself — never sent by
--- the client, same as @UserId. Excludes IsPersonalized = 1 rows: those are
--- student-generated (student-portal's spMcqStudentService Mode 7 —
--- Personalized Mock Test generation) — real MockTest rows, but never
--- admin-authored, so they don't belong in the admin's own exam list; a
--- student reaches theirs directly at its own URL, never through here. This
--- replaces the old Prisma listMockTests, which did the same
--- ExamPaper/TestKind join, the same TestQuestion (IsDeleted = 0) count per
--- exam grouped in one query, the same active-only (IsDeleted = 0)
--- MockTestPackage links, and the same CreatedOn DESC ordering — ported
--- here as-is, just with OFFSET/FETCH paging instead of Prisma's skip/take.
--- StatusLabel resolves the EXAM_STATUS _InternalService row inline
--- (ServiceValue matched against MockTest.Status) instead of the app making
--- a second getServiceOptions() round trip after the list query.
---
--- ALTER PROCEDURE [dbo].[spMcqTeacherService]
---     @Mode int = 0,
---     @IP VARCHAR(20) = NULL,
---     @UserId NVARCHAR(450) = NULL,
---     @FranchiseId int = 0,
---     @json NVARCHAR(MAX) = NULL,
---     @output NVARCHAR(MAX) OUTPUT
--- AS
--- BEGIN
--- BEGIN TRY
--- BEGIN TRANSACTION
---
--- BEGIN
--- DECLARE  -- NOTE: table variables can't share this comma-list with scalars
--- (SQL Server rejects it — "Incorrect syntax near the keyword 'TABLE'",
--- confirmed live) — each @Xxx TABLE(...) below needs its own standalone
--- DECLARE statement, separate from this scalar block.
---     @Page INT, @PageSize INT, @Total INT, @Category NVARCHAR(250),
---     @ItemsJson NVARCHAR(MAX), -- Mode 7's 65535-char JSON_QUERY-nesting fix; new, needs merging in.
---     @SevenDaysAgo DATETIME, @StartOfDay DATETIME,
---     @Q NVARCHAR(4000), @QPattern NVARCHAR(MAX), @TypeId INT, @Difficulty TINYINT, @Status INT,
---     @LotIdText NVARCHAR(50), @LotId BIGINT, @HasLotFilter BIT, @LotIdsCsv NVARCHAR(MAX),
---     @TagKeysCsv NVARCHAR(MAX), @TagValuesCsv NVARCHAR(MAX), @HasTagKeys BIT, @HasTagValues BIT,
---     @ExcludeIdsCsv NVARCHAR(MAX), @HasExcludeIds BIT, @Limit INT, @QuestionId BIGINT,
---     @LotNo VARCHAR(50), @LotNoAttempts INT, @ApprovedStatus INT,
---     @RowNo INT, @MaxRowNo INT, @CurCode NVARCHAR(50), @CurTypeCode VARCHAR(50), @CurTypeId INT,
---     @CurDifficulty TINYINT, @CurStatus INT, @CurEstSolveSec SMALLINT, @CurPresentationJson NVARCHAR(MAX),
---     @CurAnswerJson NVARCHAR(MAX), @CurSearchText NVARCHAR(MAX), @CurTagsJson NVARCHAR(MAX),
---     @NewQuestionId BIGINT, @NewVersionId BIGINT, @ContentHash CHAR(64), @CodeAttempts INT,
---     @TagRowNo INT, @TagMaxRowNo INT, @TagKey NVARCHAR(200), @TagValue NVARCHAR(200),
---     @DimensionId INT, @DimCode VARCHAR(50), @TagId BIGINT,
---     @NextVersionNo INT, @ChangeNote NVARCHAR(400),
---     @ToStatus INT, @Comment NVARCHAR(MAX), @ExistingStatus INT, @ExistingVersionId BIGINT, @QuestionsJson NVARCHAR(MAX),
---     @QInput TABLE (RowNo INT IDENTITY(1,1), Code NVARCHAR(50), TypeCode VARCHAR(50), Difficulty TINYINT,
---         Status INT, EstSolveSec SMALLINT, PresentationJson NVARCHAR(MAX), AnswerJson NVARCHAR(MAX),
---         SearchText NVARCHAR(MAX), TagsJson NVARCHAR(MAX)),
---     @TagInput TABLE (RowNo INT IDENTITY(1,1), TagKey NVARCHAR(200), TagValue NVARCHAR(200)),
---     @CreatedOutput TABLE (Code VARCHAR(50), QuestionId BIGINT),
---     @NewId TABLE (Id BIGINT),
---     @TemplateId BIGINT, @PaperId BIGINT, @MockTestId BIGINT,
---     @PublishedStatus INT, @DraftStatus INT, @DraftStatus2 INT, @SecNegative DECIMAL(5,2),
---     @BodyId BIGINT, @ProgramId BIGINT, @StageId BIGINT,
---     @TestKindId INT, @TestKindCode VARCHAR(40), @TestKindName NVARCHAR(100),
---     @ExamFilterJson NVARCHAR(MAX), @TemplateName NVARCHAR(200), @TemplateFilterJson NVARCHAR(MAX),
---     @InitialStatus INT, @Instructions NVARCHAR(MAX),
---     @MsName NVARCHAR(150), @MsRulesJson NVARCHAR(MAX),
---     @PaperName NVARCHAR(200), @PaperCode VARCHAR(30), @PaperTotalMarks DECIMAL(6,2),
---     @PaperDurationMin INT, @PaperIsQualifying BIT, @PaperDefaultLocale VARCHAR(10),
---     @SchemeId BIGINT, @MtCode VARCHAR(50), @MtCodeAttempts INT,
---     @SelectionPolicyJson NVARCHAR(MAX), @SettingsJson NVARCHAR(MAX), @SectionsJson NVARCHAR(MAX), @SettingsInJson NVARCHAR(MAX), @TemplateIdStr VARCHAR(20), @PriorTemplateId VARCHAR(20),
---     @SecName NVARCHAR(100), @SecSeqNo INT, @SecRulesJson NVARCHAR(MAX), @SecSectionIdText VARCHAR(20),
---     @SecSectionId BIGINT, @MatchesExisting BIT, @NewPool INT,
---     @OverCapacityResolution VARCHAR(10), @ExamName NVARCHAR(200),
---     @MarkingSchemeName NVARCHAR(150), @TotalMarks DECIMAL(6,2), @DurationMin INT,
---     @ToStatus2 INT, @PackagesCsv NVARCHAR(MAX), @PackageId BIGINT,
---     @SectionInput TABLE (RowNo INT IDENTITY(1,1), SectionIdText VARCHAR(20), SeqNo INT, Name NVARCHAR(100), RulesJson NVARCHAR(MAX)),
---     @CurSections TABLE (SectionId BIGINT, SeqNo INT, Kept BIT DEFAULT 0),
---     @QuestionIdsCsv NVARCHAR(MAX), @QuestionIdsInput TABLE (RowNo INT IDENTITY(1,1), QuestionId BIGINT),
---     @OrderedIdsInput TABLE (RowNo INT IDENTITY(1,1), QuestionId BIGINT)
---     -- ...plus whatever modes 1-2 already declare; merge into this one list.
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+-- =============================================
+-- Author:		<Author, DbTeam>
+-- Create date: <Create Date, 2024-03-10 13:09:25.567>
+-- Description:	<Description, storage purpose>
+-- Modes 3-32 and 34 added by Claude Code (mcq-admin Prisma-removal migration) —
+-- see mcq-admin/sql/spMcqTeacherService.sql in the repo for per-mode docs.
+-- (Mode 33, the one-off TblMasterMCQ4Question bulk migration, was removed
+-- from here — superseded by dbo.spMcqMigrationService's Mode 2.)
+-- =============================================
+
+ALTER PROCEDURE [dbo].[spMcqTeacherService]
+    @Mode int = 0,
+	@IP VARCHAR(20) = NULL,
+	@UserId NVARCHAR(450) = NULL,
+	@FranchiseId int = 0,
+	@json NVARCHAR(MAX) = NULL,
+    @output Nvarchar(max) OUTPUT
+AS
+BEGIN
+BEGIN TRY
+BEGIN TRANSACTION
+
+
+BEGIN
+DECLARE
+    @Page INT, @PageSize INT, @Total INT, @Category NVARCHAR(250),
+    @SevenDaysAgo DATETIME, @StartOfDay DATETIME,
+    @Q NVARCHAR(4000), @QPattern NVARCHAR(MAX), @TypeId INT, @Difficulty TINYINT, @Status INT,
+    @LotIdText NVARCHAR(50), @LotId BIGINT, @HasLotFilter BIT, @LotIdsCsv NVARCHAR(MAX),
+    @TagKeysCsv NVARCHAR(MAX), @TagValuesCsv NVARCHAR(MAX), @HasTagKeys BIT, @HasTagValues BIT,
+    @ExcludeIdsCsv NVARCHAR(MAX), @HasExcludeIds BIT, @Limit INT, @QuestionId BIGINT,
+    @LotNo VARCHAR(50), @LotNoAttempts INT, @ApprovedStatus INT,
+    @RowNo INT, @MaxRowNo INT, @CurCode NVARCHAR(50), @CurTypeCode VARCHAR(50), @CurTypeId INT,
+    @CurDifficulty TINYINT, @CurStatus INT, @CurEstSolveSec SMALLINT, @CurPresentationJson NVARCHAR(MAX),
+    @CurAnswerJson NVARCHAR(MAX), @CurSearchText NVARCHAR(MAX), @CurTagsJson NVARCHAR(MAX),
+    @NewQuestionId BIGINT, @NewVersionId BIGINT, @ContentHash CHAR(64), @CodeAttempts INT,
+    @TagRowNo INT, @TagMaxRowNo INT, @TagKey NVARCHAR(200), @TagValue NVARCHAR(200),
+    @DimensionId INT, @DimCode VARCHAR(50), @TagId BIGINT,
+    @NextVersionNo INT, @ChangeNote NVARCHAR(400),
+    @ToStatus INT, @Comment NVARCHAR(MAX), @ExistingStatus INT, @ExistingVersionId BIGINT,
+    @TemplateId BIGINT, @PaperId BIGINT, @MockTestId BIGINT,
+    @PublishedStatus INT, @DraftStatus INT, @DraftStatus2 INT, @SecNegative DECIMAL(5,2),
+    @BodyId BIGINT, @ProgramId BIGINT, @StageId BIGINT,
+    @TestKindId INT, @TestKindCode VARCHAR(40), @TestKindName NVARCHAR(100),
+    @ExamFilterJson NVARCHAR(MAX), @TemplateName NVARCHAR(200), @TemplateFilterJson NVARCHAR(MAX),
+    @InitialStatus INT, @Instructions NVARCHAR(MAX),
+    @MsName NVARCHAR(150), @MsRulesJson NVARCHAR(MAX),
+    @PaperName NVARCHAR(200), @PaperCode VARCHAR(30), @PaperTotalMarks DECIMAL(6,2),
+    @PaperDurationMin INT, @PaperIsQualifying BIT, @PaperDefaultLocale VARCHAR(10),
+    @SchemeId BIGINT, @MtCode VARCHAR(50), @MtCodeAttempts INT,
+    @SelectionPolicyJson NVARCHAR(MAX), @SettingsJson NVARCHAR(MAX), @SectionsJson NVARCHAR(MAX), @SettingsInJson NVARCHAR(MAX), @TemplateIdStr VARCHAR(20), @PriorTemplateId VARCHAR(20),
+    @SecName NVARCHAR(100), @SecSeqNo INT, @SecRulesJson NVARCHAR(MAX), @SecSectionIdText VARCHAR(20),
+    @SecSectionId BIGINT, @MatchesExisting BIT, @NewPool INT,
+    @OverCapacityResolution VARCHAR(10), @ExamName NVARCHAR(200),
+    @MarkingSchemeName NVARCHAR(150), @TotalMarks DECIMAL(6,2), @DurationMin INT,
+    @ToStatus2 INT, @PackagesCsv NVARCHAR(MAX), @PackageId BIGINT,
+    @QuestionIdsCsv NVARCHAR(MAX), @QuestionsJson NVARCHAR(MAX), @ItemsJson NVARCHAR(MAX);
+
+-- T-SQL does not allow a TABLE variable declaration inside the same
+-- comma-separated DECLARE list as scalar variables — each one needs its
+-- own standalone DECLARE statement.
+DECLARE @QInput TABLE (RowNo INT IDENTITY(1,1), Code NVARCHAR(50), TypeCode VARCHAR(50), Difficulty TINYINT, Status INT, EstSolveSec SMALLINT, PresentationJson NVARCHAR(MAX), AnswerJson NVARCHAR(MAX), SearchText NVARCHAR(MAX), TagsJson NVARCHAR(MAX));
+DECLARE @TagInput TABLE (RowNo INT IDENTITY(1,1), TagKey NVARCHAR(200), TagValue NVARCHAR(200));
+DECLARE @CreatedOutput TABLE (Code VARCHAR(50), QuestionId BIGINT);
+DECLARE @NewId TABLE (Id BIGINT);
+DECLARE @SectionInput TABLE (RowNo INT IDENTITY(1,1), SectionIdText VARCHAR(20), SeqNo INT, Name NVARCHAR(100), RulesJson NVARCHAR(MAX));
+DECLARE @CurSections TABLE (SectionId BIGINT, SeqNo INT, Kept BIT DEFAULT 0);
+DECLARE @QuestionIdsInput TABLE (RowNo INT IDENTITY(1,1), QuestionId BIGINT);
+DECLARE @OrderedIdsInput TABLE (RowNo INT IDENTITY(1,1), QuestionId BIGINT);
+
+    -- teacher exam panel url fro admin panel
+    if(@Mode = 1)
+    BEGIN
+        SET @output = (
+            SELECT 1 AS ID,
+            200 AS statuscode,
+            'https://proexam.dthlms.com' AS response
+            FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
+        );
+        COMMIT RETURN;
+    END
+
+    -- all packages with mcq
+    if(@mode =2)
+    BEGIN
+        SET @output = (
+            SELECT 1 AS ID,
+            200 AS statuscode,
+            (
+                SELECT distinct p.PackageId AS [value]
+				,p.PackageName AS [label]
+				FROM DBDTHLMSPro.[dbo].[tblPackage] AS p
+				JOIN DBDTHLMSPro..tblPackageService AS ps ON ps.PackageId = p.PackageId and ps.IsDeleted = 0 and ps.IsActive = 1
+				WHERE p.FranchiseId = @FranchiseId
+					AND p.IsDeleted = 0
+					AND p.IsCombo = 0
+					AND ps.ServiceId = 4 --mcq
+                ORDER by PackageName
+                for json path
+            ) AS response
+            FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
+        );
+        COMMIT RETURN;
+    END
+
+	
 
     if(@Mode = 3)
     BEGIN
@@ -309,19 +314,7 @@ BEGIN
               AND (@HasTagKeys = 0 OR td2.Name IN (SELECT value FROM STRING_SPLIT(@TagKeysCsv, ',')))
           ))
 
-    -- Built as a plain variable assignment, NOT nested inside JSON_QUERY(...)
-    -- FOR JSON PATH like every other mode's @output. SQL Server has a known
-    -- bug (confirmed live, SQL Server 2019): when JSON_QUERY() embeds a
-    -- FOR JSON fragment >= 65,535 characters into an *outer* FOR JSON query,
-    -- the combined output comes back malformed/truncated at that exact
-    -- 65535 boundary ("JSON text is not properly formatted... position
-    -- 65535"). A page of questions (PresentationJson + tags, times
-    -- PageSize) crosses that easily, and the exam-designer question-picker
-    -- asks for a larger PageSize than the plain questions list, so it hits
-    -- this first. A single-level `SET @var = (SELECT ... FOR JSON PATH)`
-    -- assignment to an NVARCHAR(MAX) variable does NOT have this limit, so
-    -- Items is captured that way and stitched into @output by string
-    -- concatenation instead of another layer of FOR JSON nesting.
+
     -- Presentation/TagNames are deliberately NOT wrapped in JSON_QUERY(...)
     -- here (unlike every other mode in this file that embeds question
     -- content) — see the comment above @ItemsJson's SET. Confirmed live:
@@ -937,9 +930,17 @@ END
 if(@Mode = 19)
 BEGIN
     SET @output = (
-        SELECT 1 AS ID, 200 AS statuscode,
-        (SELECT Code, Name, Description FROM TestKind WHERE IsDeleted = 0 ORDER BY TestKindId FOR JSON PATH, INCLUDE_NULL_VALUES) AS response
-        FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER
+        SELECT 1 AS ID,
+           200 AS statuscode,
+           (
+                SELECT Code, Name, Description 
+                FROM TestKind 
+                WHERE IsDeleted = 0
+                AND FranchiseId = @FranchiseId or FranchiseId = 1
+                ORDER BY TestKindId 
+                FOR JSON PATH
+           ) AS response
+        FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
     );
     COMMIT RETURN;
 END
@@ -1201,13 +1202,8 @@ END
 -- "TestKindName": "...", "MarkingSchemeRulesJson": {...},
 -- "MarkingSchemeName": "...", "TotalMarks": <decimal>, "DurationMin": <int>,
 -- "Instructions": "...", "OverCapacityResolution": "trim" | "manual",
--- "Settings": {"sequentialSections": bool, "allowResume": bool} (merged into
--- MockTest.SettingsJson, other keys kept; Mode 22 gets the same object as
--- ExamFilterJson.settings),
 -- "Sections": [{"SectionId": "<bigint string>" | null, "Name": "...",
--- "RulesJson": {questionType,questions,mandatory,marks,negative,durationMin,breakMin}}],
--- (DurationMin above = sum of the sections' durationMin; breakMin is the
--- break AFTER that section and is not part of DurationMin.)
+-- "RulesJson": {questionType,questions,mandatory,marks,negative}}],
 -- "TemplateName": "..." | null, "TemplateFilterJson": "<JSON text>" | null}.
 -- Only allowed while the exam is Draft. Same two-pass negative-placeholder
 -- reorder trick the old Prisma version used for PaperSection.SeqNo (the
@@ -1763,164 +1759,94 @@ BEGIN
     COMMIT RETURN;
 END
 
--- Mode 33: Create questions in bulk, uncapped (createQuestionsBulk).
--- DEPRECATED / UNUSED — superseded by Mode 2 of the dedicated
--- dbo.spMcqMigrationService (see mcq-admin/sql/spMcqMigrationService.sql),
--- which moved this exact logic out of the production teacher SP so
--- migration-only work doesn't live alongside it. Left deployed here
--- (harmless, nothing calls it) rather than torn out — do not wire anything
--- new to this mode; use spMcqMigrationService instead.
---
--- Byte-identical to Mode 13 (createQuestions) — same @json contract, same
--- DB-level checks, same writes (Question, QuestionVersion, find-or-create
--- TagDimension/Tag + QuestionTag, QuestionSearch, zeroed QuestionStat) —
--- except the "IF @Total > 200" batch cap is removed.
-if(@Mode = 33)
+-- Mode 34: Dashboard analytics (app/lib/dashboard/data.ts's getDashboardAnalytics,
+-- the home page's charts). @json: {}. Franchise-scoped like every other mode.
+-- Deliberately cheap — plain COUNT/GROUP BY over indexed columns, no
+-- per-row work: exam totals by Status (admin-authored exams only —
+-- IsPersonalized = 0, same exclusion as Mode 3), attempt/student totals, the
+-- 10 most-attempted exams, attempts per day for the last 14 days, question
+-- counts for every lot that has at least one question (with its CreatedOn), and the
+-- question difficulty spread. Status/difficulty come back as the raw numeric
+-- values; the app maps them to _InternalService labels (EXAM_STATUS /
+-- QUESTION_DIFFICULTY) so no status code is hardcoded here. Reuses
+-- @StartOfDay as the 14-day window start.
+if(@Mode = 34)
 BEGIN
-    SELECT @LotIdText = LotId FROM OPENJSON(@json) WITH (LotId NVARCHAR(50))
-    SET @HasLotFilter = CASE WHEN @LotIdText IS NOT NULL AND LTRIM(RTRIM(@LotIdText)) <> '' THEN 1 ELSE 0 END
-    SET @LotId = TRY_CAST(@LotIdText AS BIGINT)
-
-    SET @QuestionsJson = NULL
-    SELECT @QuestionsJson = Q FROM OPENJSON(@json) WITH (Q NVARCHAR(MAX) '$.Questions' AS JSON)
-    IF @QuestionsJson IS NULL
-        SELECT @QuestionsJson = Q FROM OPENJSON(@json) WITH (Q NVARCHAR(MAX) '$.Questions')
-    IF @QuestionsJson IS NOT NULL AND ISJSON(@QuestionsJson) = 0 SET @QuestionsJson = NULL
-
-    DELETE FROM @QInput
-    INSERT INTO @QInput (Code, TypeCode, Difficulty, Status, EstSolveSec, PresentationJson, AnswerJson, SearchText, TagsJson)
-    SELECT Code, TypeCode, Difficulty, Status, EstSolveSec, PresentationJson, AnswerJson, SearchText, COALESCE(Tags, TagsStr)
-    FROM OPENJSON(@QuestionsJson)
-    WITH (
-        Code NVARCHAR(50), TypeCode VARCHAR(50), Difficulty TINYINT, Status INT, EstSolveSec SMALLINT,
-        PresentationJson NVARCHAR(MAX), AnswerJson NVARCHAR(MAX), SearchText NVARCHAR(MAX),
-        Tags NVARCHAR(MAX) AS JSON, TagsStr NVARCHAR(MAX) '$.Tags'
-    )
-
-    SELECT @Total = COUNT(*) FROM @QInput
-    IF @Total = 0
-    BEGIN
-        SET @output = (SELECT 1 AS ID, 400 AS statuscode, 'No questions to create.' AS response FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER);
-        COMMIT RETURN;
-    END
-    IF EXISTS (SELECT 1 FROM @QInput qi WHERE NOT EXISTS (SELECT 1 FROM QuestionType t WHERE t.Code = qi.TypeCode AND t.IsDeleted = 0))
-    BEGIN
-        SET @output = (SELECT 1 AS ID, 400 AS statuscode, 'One or more questions have an unknown question type.' AS response FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER);
-        COMMIT RETURN;
-    END
-    IF EXISTS (SELECT Code FROM @QInput WHERE Code IS NOT NULL AND LTRIM(RTRIM(Code)) <> '' GROUP BY Code HAVING COUNT(*) > 1)
-    BEGIN
-        SET @output = (SELECT 1 AS ID, 400 AS statuscode, 'Duplicate code(s) in this batch.' AS response FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER);
-        COMMIT RETURN;
-    END
-    IF EXISTS (SELECT 1 FROM @QInput qi WHERE qi.Code IS NOT NULL AND LTRIM(RTRIM(qi.Code)) <> '' AND EXISTS (SELECT 1 FROM Question q WHERE q.Code = qi.Code))
-    BEGIN
-        SET @output = (SELECT 1 AS ID, 409 AS statuscode, 'One or more codes already exist.' AS response FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER);
-        COMMIT RETURN;
-    END
-
-    SELECT @ApprovedStatus = TRY_CAST(ServiceValue AS INT) FROM _InternalService WHERE Category = 'QUESTION_STATUS' AND ServiceLabel = 'APPROVED' AND IsActive = 1
-
-    DELETE FROM @CreatedOutput
-    SELECT @RowNo = MIN(RowNo), @MaxRowNo = MAX(RowNo) FROM @QInput
-    WHILE @RowNo IS NOT NULL AND @RowNo <= @MaxRowNo
-    BEGIN
-        SELECT
-            @CurCode = Code, @CurTypeCode = TypeCode, @CurDifficulty = Difficulty, @CurStatus = Status,
-            @CurEstSolveSec = EstSolveSec, @CurPresentationJson = PresentationJson, @CurAnswerJson = AnswerJson,
-            @CurSearchText = SearchText, @CurTagsJson = TagsJson
-        FROM @QInput WHERE RowNo = @RowNo
-
-        SELECT @CurTypeId = QuestionTypeId FROM QuestionType WHERE Code = @CurTypeCode AND IsDeleted = 0
-
-        IF @CurCode IS NULL OR LTRIM(RTRIM(@CurCode)) = ''
-        BEGIN
-            SET @CodeAttempts = 0
-            WHILE 1 = 1
-            BEGIN
-                SET @CurCode = 'Q-' + UPPER(LEFT(@CurTypeCode, 3)) + '-' + UPPER(CONVERT(VARCHAR(8), CRYPT_GEN_RANDOM(4), 2))
-                IF NOT EXISTS (SELECT 1 FROM Question WHERE Code = @CurCode) BREAK
-                SET @CodeAttempts += 1
-                IF @CodeAttempts > 5 BREAK
-            END
-        END
-
-        DELETE FROM @NewId
-        IF @CurStatus = @ApprovedStatus
-            INSERT INTO dbo.Question (Code, QuestionTypeId, Difficulty, Status, EstSolveSec, LotId, ApprovedBy, ApprovedOn, CreatedBy, FranchiseId)
-            OUTPUT INSERTED.QuestionId INTO @NewId
-            VALUES (@CurCode, @CurTypeId, @CurDifficulty, @CurStatus, @CurEstSolveSec, @LotId, @UserId, GETDATE(), @UserId, @FranchiseId)
-        ELSE
-            INSERT INTO dbo.Question (Code, QuestionTypeId, Difficulty, Status, EstSolveSec, LotId, CreatedBy, FranchiseId)
-            OUTPUT INSERTED.QuestionId INTO @NewId
-            VALUES (@CurCode, @CurTypeId, @CurDifficulty, @CurStatus, @CurEstSolveSec, @LotId, @UserId, @FranchiseId)
-        SELECT @NewQuestionId = Id FROM @NewId
-
-        SET @ContentHash = LOWER(CONVERT(CHAR(64), HASHBYTES('SHA2_256', @CurPresentationJson + '|' + @CurAnswerJson), 2))
-
-        DELETE FROM @NewId
-        INSERT INTO dbo.QuestionVersion (QuestionId, VersionNo, Locale, PresentationJson, AnswerJson, MetaJson, ContentHash, ChangeNote, CreatedBy, FranchiseId)
-        OUTPUT INSERTED.VersionId INTO @NewId
-        VALUES (@NewQuestionId, 1, 'en', @CurPresentationJson, @CurAnswerJson, N'{"source":"question-bank-ui"}', @ContentHash, 'Initial version', @UserId, @FranchiseId)
-        SELECT @NewVersionId = Id FROM @NewId
-
-        UPDATE dbo.Question SET CurrentVersionId = @NewVersionId, ModifiedBy = @UserId, ModifiedOn = GETDATE() WHERE QuestionId = @NewQuestionId
-
-        DELETE FROM @TagInput
-        INSERT INTO @TagInput (TagKey, TagValue)
-        SELECT [Key], Value FROM OPENJSON(@CurTagsJson) WITH ([Key] NVARCHAR(200) '$.Key', Value NVARCHAR(200) '$.Value')
-        WHERE [Key] IS NOT NULL AND LTRIM(RTRIM([Key])) <> '' AND Value IS NOT NULL AND LTRIM(RTRIM(Value)) <> ''
-
-        SELECT @TagRowNo = MIN(RowNo), @TagMaxRowNo = MAX(RowNo) FROM @TagInput
-        WHILE @TagRowNo IS NOT NULL AND @TagRowNo <= @TagMaxRowNo
-        BEGIN
-            SELECT @TagKey = LTRIM(RTRIM(TagKey)), @TagValue = LTRIM(RTRIM(TagValue)) FROM @TagInput WHERE RowNo = @TagRowNo
-
-            SET @DimensionId = NULL
-            SELECT TOP 1 @DimensionId = DimensionId FROM TagDimension
-            WHERE IsDeleted = 0 AND FranchiseId = @FranchiseId AND (Name = @TagKey OR Code = @TagKey)
-
-            IF @DimensionId IS NULL
-            BEGIN
-                SET @DimCode = LOWER(LEFT(REPLACE(REPLACE(REPLACE(REPLACE(@TagKey, ' ', '_'), '-', '_'), '/', '_'), '\', '_'), 40))
-                IF @DimCode = '' SET @DimCode = 'tag'
-                SET @DimCode = @DimCode + '_' + LOWER(CONVERT(VARCHAR(8), CRYPT_GEN_RANDOM(4), 2))
-                INSERT INTO dbo.TagDimension (Code, Name, CreatedBy, FranchiseId) VALUES (@DimCode, @TagKey, @UserId, @FranchiseId)
-                SET @DimensionId = CAST(SCOPE_IDENTITY() AS INT)
-            END
-
-            SET @TagId = NULL
-            SELECT TOP 1 @TagId = TagId FROM Tag WHERE DimensionId = @DimensionId AND IsDeleted = 0 AND FranchiseId = @FranchiseId AND Name = @TagValue
-
-            IF @TagId IS NULL
-            BEGIN
-                DELETE FROM @NewId
-                INSERT INTO dbo.Tag (DimensionId, Name, CreatedBy, FranchiseId)
-                OUTPUT INSERTED.TagId INTO @NewId
-                VALUES (@DimensionId, @TagValue, @UserId, @FranchiseId)
-                SELECT @TagId = Id FROM @NewId
-            END
-
-            IF NOT EXISTS (SELECT 1 FROM QuestionTag WHERE QuestionId = @NewQuestionId AND TagId = @TagId)
-                INSERT INTO dbo.QuestionTag (TagId, QuestionId, CreatedBy, FranchiseId) VALUES (@TagId, @NewQuestionId, @UserId, @FranchiseId)
-
-            SET @TagRowNo += 1
-        END
-
-        INSERT INTO dbo.QuestionSearch (QuestionId, Locale, SearchText, CreatedBy, FranchiseId) VALUES (@NewQuestionId, 'en', @CurSearchText, @UserId, @FranchiseId)
-        INSERT INTO dbo.QuestionStat (QuestionId, CreatedBy, FranchiseId) VALUES (@NewQuestionId, @UserId, @FranchiseId)
-        INSERT INTO @CreatedOutput (Code, QuestionId) VALUES (@CurCode, @NewQuestionId)
-
-        SET @RowNo += 1
-    END
+    SET @StartOfDay = DATEADD(DAY, -13, CAST(GETDATE() AS DATE))
 
     SET @output = (
         SELECT 1 AS ID, 200 AS statuscode,
-        (SELECT JSON_QUERY((SELECT Code, CAST(QuestionId AS VARCHAR(20)) AS QuestionId FROM @CreatedOutput ORDER BY QuestionId FOR JSON PATH)) AS Created FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER) AS response
+        (
+            SELECT
+                (SELECT COUNT(*) FROM MockTest WHERE IsDeleted = 0 AND IsPersonalized = 0 AND FranchiseId = @FranchiseId) AS TotalExams,
+                (SELECT COUNT(*) FROM Attempt a JOIN MockTest m ON m.MockTestId = a.MockTestId
+                    WHERE a.IsDeleted = 0 AND m.IsDeleted = 0 AND m.IsPersonalized = 0 AND m.FranchiseId = @FranchiseId) AS TotalAttempts,
+                (SELECT COUNT(DISTINCT a.StudentId) FROM Attempt a JOIN MockTest m ON m.MockTestId = a.MockTestId
+                    WHERE a.IsDeleted = 0 AND m.IsDeleted = 0 AND m.IsPersonalized = 0 AND m.FranchiseId = @FranchiseId) AS TotalStudents,
+                (SELECT COUNT(*) FROM QuestionLot WHERE IsDeleted = 0 AND FranchiseId = @FranchiseId) AS TotalLots,
+                JSON_QUERY((
+                    SELECT Status, COUNT(*) AS Count FROM MockTest
+                    WHERE IsDeleted = 0 AND IsPersonalized = 0 AND FranchiseId = @FranchiseId
+                    GROUP BY Status ORDER BY Status FOR JSON PATH, INCLUDE_NULL_VALUES
+                )) AS ExamsByStatus,
+                JSON_QUERY((
+                    SELECT TOP 10 m.Name, m.Code, COUNT(*) AS Attempts, COUNT(DISTINCT a.StudentId) AS Students
+                    FROM Attempt a JOIN MockTest m ON m.MockTestId = a.MockTestId
+                    WHERE a.IsDeleted = 0 AND m.IsDeleted = 0 AND m.IsPersonalized = 0 AND m.FranchiseId = @FranchiseId
+                    GROUP BY m.MockTestId, m.Name, m.Code
+                    ORDER BY COUNT(*) DESC FOR JSON PATH, INCLUDE_NULL_VALUES
+                )) AS TopExams,
+                JSON_QUERY((
+                    SELECT CONVERT(VARCHAR(10), CAST(a.StartedOn AS DATE), 23) AS Day, COUNT(*) AS Count
+                    FROM Attempt a JOIN MockTest m ON m.MockTestId = a.MockTestId
+                    WHERE a.IsDeleted = 0 AND m.IsDeleted = 0 AND m.IsPersonalized = 0 AND m.FranchiseId = @FranchiseId
+                      AND a.StartedOn >= @StartOfDay
+                    GROUP BY CAST(a.StartedOn AS DATE)
+                    ORDER BY CAST(a.StartedOn AS DATE) FOR JSON PATH, INCLUDE_NULL_VALUES
+                )) AS AttemptsByDay,
+                JSON_QUERY((
+                    SELECT ql.LotNo, ql.CreatedOn, COUNT(q.QuestionId) AS Count
+                    FROM QuestionLot ql
+                    JOIN Question q ON q.LotId = ql.LotId AND q.IsDeleted = 0 AND q.FranchiseId = @FranchiseId
+                    WHERE ql.IsDeleted = 0 AND ql.FranchiseId = @FranchiseId
+                    GROUP BY ql.LotId, ql.LotNo, ql.CreatedOn
+                    ORDER BY ql.CreatedOn DESC FOR JSON PATH, INCLUDE_NULL_VALUES
+                )) AS Lots,
+                JSON_QUERY((
+                    SELECT Difficulty, COUNT(*) AS Count FROM Question
+                    WHERE IsDeleted = 0 AND FranchiseId = @FranchiseId
+                    GROUP BY Difficulty ORDER BY Difficulty FOR JSON PATH, INCLUDE_NULL_VALUES
+                )) AS ByDifficulty
+            FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER
+        ) AS response
         FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER
     );
     COMMIT RETURN;
 END
 
--- ...rest of the existing procedure (modes 1-2, END/COMMIT/CATCH block)
--- unchanged.
+END
+COMMIT TRANSACTION
+
+    END TRY
+    BEGIN CATCH
+        ROLLBACK TRANSACTION -- Rollback transaction in case of error
+
+        -- Insert error details into the DatabaseError table
+        -- INSERT INTO DatabaseError (Error_State, Error_Line, ERROR_MESSAGE, ERROR_PROCEDURE, DateOfError, FranchiseId, IpAddress, jsonData, Mode, UserId)
+        -- VALUES (
+        --     ERROR_STATE(),
+        --     ERROR_LINE(),
+        --     ERROR_MESSAGE(),
+        --     ERROR_PROCEDURE(),
+        --     GETDATE(),
+        --     @FranchiseId,
+        --     @IP,
+        --     @json,
+        --     @Mode,
+        --     @UserId
+        -- );
+
+		SET @output = JSON_QUERY((select 0 as ID, 400 as StatusCode, ERROR_MESSAGE() as response FOR JSON PATH, WITHOUT_ARRAY_WRAPPER));
+    END CATCH
+END
+GO

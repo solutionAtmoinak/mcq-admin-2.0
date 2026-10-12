@@ -45,7 +45,7 @@ export default function TestKindInfoModal({
                       {k.code}
                     </span>
                     {active && (
-                      <span className="rounded-full bg-zinc-900 px-2 py-0.5 text-[11px] font-medium text-white">
+                      <span className="rounded-full bg-brand px-2 py-0.5 text-[11px] font-medium text-white">
                         Selected
                       </span>
                     )}
