@@ -4,9 +4,13 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { FiImage, FiMusic, FiPaperclip, FiVideo } from "react-icons/fi";
 import { updateQuestion } from "@/app/lib/questions/actions";
+import { notify } from "@/app/lib/shared/toast";
+import type { CaseStudyRef } from "@/app/lib/questions/caseStudy";
+import { CaseStudyButton, CaseStudyDrawer } from "@/app/components/questions/CaseStudyParts";
 import {
   QUESTION_TYPE_LABELS,
   isOptionBasedType,
+  isSingleAnswerType,
   validateQuestion,
   type OptionInput,
   type QuestionInput,
@@ -63,6 +67,7 @@ export default function QuestionEditForm({
   const [saved, setSaved] = useState(false);
   const [isPending, startTransition] = useTransition();
   const [mediaOptionIndex, setMediaOptionIndex] = useState<number | null>(null);
+  const [caseDrawerMode, setCaseDrawerMode] = useState<"pick" | "edit" | null>(null);
 
   function update(patch: Partial<QuestionInput>) {
     setSaved(false);
@@ -102,7 +107,7 @@ export default function QuestionEditForm({
   function toggleCorrect(optionId: string) {
     setSaved(false);
     setData((d) => {
-      if (d.typeCode === "mcq_single") return { ...d, correctOptionIds: [optionId] };
+      if (isSingleAnswerType(d.typeCode)) return { ...d, correctOptionIds: [optionId] };
       const has = d.correctOptionIds.includes(optionId);
       return {
         ...d,
@@ -131,6 +136,18 @@ export default function QuestionEditForm({
     });
   }
 
+  // Called by the drawer once a case study is chosen or saved.
+  function handleCaseStudySelected(ref: CaseStudyRef) {
+    setCaseDrawerMode(null);
+    setSaved(false);
+    setData((d) => ({
+      ...d,
+      caseStudy: ref,
+      // A different paragraph means a fresh position (end of that case study).
+      groupSeq: d.caseStudy?.groupId === ref.groupId ? d.groupSeq : null,
+    }));
+  }
+
   function handleReset() {
     setData(initialInput);
     setChangeNote("");
@@ -145,17 +162,28 @@ export default function QuestionEditForm({
     );
     if (err) {
       setError(err);
+      notify(err, "error");
       return;
     }
     setError(null);
     startTransition(async () => {
-      const res = await updateQuestion(questionId, data, changeNote);
-      if (!res.ok) {
-        setError(res.error);
+      try {
+        const res = await updateQuestion(questionId, data, changeNote);
+        if (!res.ok) {
+          setError(res.error);
+          notify(res.error, "error");
+          return;
+        }
+      } catch (e) {
+        // A thrown server action (network / server error) used to leave the page looking untouched.
+        const message = e instanceof Error ? e.message : "The question could not be saved.";
+        setError(message);
+        notify(message, "error");
         return;
       }
       setChangeNote("");
       setSaved(true);
+      notify("Question saved.", "success");
       router.refresh();
     });
   }
@@ -177,6 +205,14 @@ export default function QuestionEditForm({
           Changes saved.
         </div>
       )}
+
+      <CaseStudyDrawer
+        open={caseDrawerMode !== null}
+        mode={caseDrawerMode ?? "pick"}
+        current={data.caseStudy ?? null}
+        onClose={() => setCaseDrawerMode(null)}
+        onSelect={handleCaseStudySelected}
+      />
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3 xl:grid-cols-4">
         {/* Main content */}
@@ -200,6 +236,13 @@ export default function QuestionEditForm({
                 onChange={(v) => update({ difficulty: v ?? data.difficulty })}
                 data={referenceData.difficultyOptions.map((o) => ({ value: o.value, label: o.displayLabel }))}
               />
+              {data.typeCode === "case_study" && (
+                <CaseStudyButton
+                  caseStudy={data.caseStudy}
+                  onPick={() => setCaseDrawerMode("pick")}
+                  onEdit={() => setCaseDrawerMode("edit")}
+                />
+              )}
             </div>
           </div>
 
@@ -227,7 +270,7 @@ export default function QuestionEditForm({
             {optionBased ? (
               <div>
                 <label className={labelClass}>
-                  Options ({data.typeCode === "mcq_single" ? "select one correct answer" : "select all correct answers"})
+                  Options ({isSingleAnswerType(data.typeCode) ? "select one correct answer" : "select all correct answers"})
                 </label>
                 <div className="flex flex-col gap-2">
                   {data.options.map((opt, i) => {
@@ -241,7 +284,7 @@ export default function QuestionEditForm({
                         }`}
                       >
                         <input
-                          type={data.typeCode === "mcq_single" ? "radio" : "checkbox"}
+                          type={isSingleAnswerType(data.typeCode) ? "radio" : "checkbox"}
                           name="edit-correct"
                           checked={isCorrect}
                           onChange={() => toggleCorrect(opt.id)}
@@ -418,7 +461,8 @@ export default function QuestionEditForm({
         <button className={buttonClass} onClick={handleReset} disabled={isPending || !isDirty}>
           Reset
         </button>
-        {isDirty && <span className="text-xs text-amber-600">Unsaved changes</span>}
+        {isDirty && !error && <span className="text-xs text-amber-600">Unsaved changes</span>}
+        {error && <span className="text-sm text-red-600">{error}</span>}
       </div>
 
       {mediaOption && (

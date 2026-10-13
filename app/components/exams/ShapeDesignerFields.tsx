@@ -245,7 +245,6 @@ export default function ShapeDesignerFields({
             <div className={sectionLabelClass}>Sections</div>
             <p className="text-xs text-zinc-400">
               <span>{resumeLocked ? "There is no section-wise timing for a resumable exam — it works on the total time only. " : "Each section has its own time limit. "}</span>
-              <span>A pool of questions and how many of those are mandatory to attempt.</span>
             </p>
           </div>
           <button type="button" className={iconTextButtonClass} onClick={addSection}>
@@ -284,9 +283,11 @@ export default function ShapeDesignerFields({
                     <div className="w-24">
                       <label className={labelClass}>Type</label>
                       <input
-                        className={inputClass}
+                        className={`${inputClass} cursor-not-allowed opacity-60`}
                         value={s.questionType}
-                        onChange={(e) => updateSection(s.clientId, { questionType: e.target.value })}
+                        readOnly
+                        disabled
+                        title="Section type is fixed"
                         placeholder="mcq"
                       />
                     </div>
@@ -306,16 +307,6 @@ export default function ShapeDesignerFields({
                         onChange={(e) => updateSection(s.clientId, { questions: Number(e.target.value) })}
                       />
 
-                    </div>
-                    <div className="w-24">
-                      <label className={labelClass}>Mandatory</label>
-                      <input
-                        type="number"
-                        className={inputClass}
-                        value={s.mandatory}
-                        max={s.questions > 0 ? s.questions : 0}
-                        onChange={(e) => updateSection(s.clientId, { mandatory: Number(e.target.value) })}
-                      />
                     </div>
                     <div className="w-24">
                       <label className={labelClass}>Time (min)</label>

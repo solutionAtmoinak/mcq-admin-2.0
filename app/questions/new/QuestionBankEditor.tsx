@@ -5,6 +5,7 @@ import { BackLink } from "@/app/components/common/BackLink";
 import Drawer from "@/app/components/common/Drawer";
 import { MathTextPreview } from "@/app/components/common/MathText";
 import { MediaAttachmentField } from "@/app/components/media/MediaAttachmentField";
+import { CaseStudyButton, CaseStudyDrawer } from "@/app/components/questions/CaseStudyParts";
 import OptionMediaModal from "@/app/components/questions/OptionMediaModal";
 import QuestionOptionalSettingsModal from "@/app/components/questions/QuestionOptionalSettingsModal";
 import { TagPairEditor } from "@/app/components/questions/TagPairEditor";
@@ -25,8 +26,10 @@ import {
   createQuestionLot,
   createQuestions,
   getQuestionInputForDuplicate,
+  saveCaseStudy,
   updateQuestion,
 } from "@/app/lib/questions/actions";
+import type { CaseStudyRef } from "@/app/lib/questions/caseStudy";
 import { QUESTION_STATUS_BADGE } from "@/app/lib/questions/constants";
 import type { TodayQuestionItem } from "@/app/lib/questions/data";
 import {
@@ -35,11 +38,13 @@ import {
   QUESTION_TYPE_LABELS,
   emptyQuestion,
   isOptionBasedType,
+  isSingleAnswerType,
   nextClientId,
   parseImportExcelRows,
   parseImportJson,
   parseImportWordLines,
   validateQuestion,
+  type ImportResult,
   type OptionInput,
   type QuestionInput,
   type QuestionTypeCode,
@@ -188,6 +193,8 @@ export default function QuestionBankEditor({
       saved: null,
     },
   ]);
+  // Which row's case-study drawer is open (and whether it is picking or editing).
+  const [caseDrawer, setCaseDrawer] = useState<{ clientId: string; mode: "pick" | "edit" } | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [defaultsOpen, setDefaultsOpen] = useState(false);
   const questionStatusOptions: ServiceOption[] =
@@ -306,7 +313,7 @@ export default function QuestionBankEditor({
     setRows((prev) =>
       prev.map((r) => {
         if (r.clientId !== clientId) return r;
-        if (type === "mcq_single") {
+        if (isSingleAnswerType(type)) {
           return { ...r, data: { ...r.data, correctOptionIds: [optionId] } };
         }
         const has = r.data.correctOptionIds.includes(optionId);
@@ -358,6 +365,72 @@ export default function QuestionBankEditor({
 
   function removeRow(clientId: string) {
     setRows((prev) => (prev.length <= 1 ? prev : prev.filter((r) => r.clientId !== clientId)));
+  }
+
+  // ---- Case studies ----
+
+  // Called by the drawer once a case study is chosen or saved. Every row on the
+  // page that already points at the same saved paragraph gets the new text too
+  // (an edit makes a new version of the shared paragraph).
+  function handleCaseStudySelected(ref: CaseStudyRef) {
+    const target = caseDrawer?.clientId;
+    setCaseDrawer(null);
+    if (!target) return;
+    setRows((prev) =>
+      prev.map((r) => {
+        if (r.clientId === target) {
+          const sameGroup = r.data.caseStudy?.groupId === ref.groupId;
+          return { ...r, data: { ...r.data, caseStudy: ref, groupSeq: sameGroup ? r.data.groupSeq : null } };
+        }
+        if (ref.groupId && r.data.caseStudy?.groupId === ref.groupId) {
+          return { ...r, data: { ...r.data, caseStudy: ref } };
+        }
+        return r;
+      }),
+    );
+  }
+
+  // Case studies that came from a bulk import are not in the DB yet. Save them
+  // before their questions — one case study per distinct paragraph even when
+  // several rows share it — and write the new ids back into every row so a
+  // later re-save links to the same case study instead of creating another.
+  // Returns clientId -> saved case study for the given rows (null on failure,
+  // already toasted).
+  async function resolveRowCaseStudies(targets: Row[]): Promise<Record<string, CaseStudyRef> | null> {
+    const out: Record<string, CaseStudyRef> = {};
+    const created = new Map<string, CaseStudyRef>();
+    const keyOf = (c: CaseStudyRef) => `${c.title}\n${c.text}`;
+
+    for (const r of targets) {
+      const cs = r.data.typeCode === "case_study" ? r.data.caseStudy : null;
+      if (!cs) continue;
+      if (cs.groupId) {
+        out[r.clientId] = cs;
+        continue;
+      }
+      let saved = created.get(keyOf(cs));
+      if (!saved) {
+        const res = await saveCaseStudy(cs);
+        if (!res.ok) {
+          notify(res.error, "error");
+          return null;
+        }
+        saved = { ...cs, groupId: res.groupId, code: res.code };
+        created.set(keyOf(cs), saved);
+      }
+      out[r.clientId] = saved;
+    }
+
+    if (created.size > 0) {
+      setRows((prev) =>
+        prev.map((r) => {
+          const cs = r.data.caseStudy;
+          const savedRef = out[r.clientId] ?? (cs && !cs.groupId ? created.get(keyOf(cs)) : undefined);
+          return savedRef && savedRef !== cs ? { ...r, data: { ...r.data, caseStudy: savedRef } } : r;
+        }),
+      );
+    }
+    return out;
   }
 
   // Inline validation errors on a row card are transient feedback, not a
@@ -412,7 +485,8 @@ export default function QuestionBankEditor({
       if (idx === -1) return prev;
       const clone: Row = {
         clientId: nextClientId(),
-        data: { ...prev[idx].data, code: "", tags: cloneTags(prev[idx].data.tags) },
+        // Stays in the same case study; its position there is re-assigned on save.
+        data: { ...prev[idx].data, code: "", groupSeq: null, tags: cloneTags(prev[idx].data.tags) },
         saved: null,
       };
       const next = [...prev];
@@ -439,18 +513,34 @@ export default function QuestionBankEditor({
     }
   }
 
+  // Turns a parsed import into page rows. A row that came with a case study
+  // (Word "CaseStudy:" block / JSON "caseStudy") carries that paragraph as an
+  // unsaved CaseStudyRef; it is saved when its question is. Adds to what is
+  // already on the page, same as before (see mergeImportedRows).
+  function applyImportResult(result: ImportResult): { rowCount: number; warnings: string[] } {
+    const caseByKey = new Map((result.caseStudies ?? []).map((c) => [c.key, c]));
+    const newRows: Row[] = result.rows.map((data, i) => {
+      const importKey = result.rowCaseStudyKeys?.[i];
+      const imported = importKey ? caseByKey.get(importKey) : undefined;
+      return {
+        clientId: nextClientId(),
+        data: imported
+          ? { ...data, caseStudy: { groupId: null, code: null, title: imported.title, text: imported.text } }
+          : data,
+        saved: null,
+      };
+    });
+    setRows((prev) => mergeImportedRows(prev, newRows));
+    return { rowCount: newRows.length, warnings: result.warnings };
+  }
+
   function handleParseImport() {
     setImportError(null);
     setImportWarnings([]);
     try {
-      const { rows: parsedRows, warnings } = parseImportJson(
-        importText,
-        questionStatusOptions,
-      );
-      const newRows: Row[] = parsedRows.map((data) => ({ clientId: nextClientId(), data, saved: null }));
-      setRows((prev) => mergeImportedRows(prev, newRows));
+      const { rowCount, warnings } = applyImportResult(parseImportJson(importText, questionStatusOptions));
       if (warnings.length === 0) setImportText("");
-      finishBulkImport(newRows.length, warnings, "the AI assistant");
+      finishBulkImport(rowCount, warnings, "the AI assistant");
     } catch (e) {
       setImportError((e as Error).message);
     }
@@ -479,14 +569,10 @@ export default function QuestionBankEditor({
       const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: "" });
       const [headerRow, ...dataRows] = rows;
 
-      const { rows: parsedRows, warnings } = parseImportExcelRows(
-        headerRow ?? [],
-        dataRows,
-        questionStatusOptions,
+      const { rowCount, warnings } = applyImportResult(
+        parseImportExcelRows(headerRow ?? [], dataRows, questionStatusOptions),
       );
-      const newRows: Row[] = parsedRows.map((data) => ({ clientId: nextClientId(), data, saved: null }));
-      setRows((prev) => mergeImportedRows(prev, newRows));
-      finishBulkImport(newRows.length, warnings, "your spreadsheet");
+      finishBulkImport(rowCount, warnings, "your spreadsheet");
     } catch (err) {
       setImportError((err as Error).message);
     }
@@ -511,10 +597,8 @@ export default function QuestionBankEditor({
     try {
       const { extractWordImportLines } = await import("@/app/lib/questions/wordDocx");
       const lines = await extractWordImportLines(file);
-      const { rows: parsedRows, warnings } = parseImportWordLines(lines, questionStatusOptions);
-      const newRows: Row[] = parsedRows.map((data) => ({ clientId: nextClientId(), data, saved: null }));
-      setRows((prev) => mergeImportedRows(prev, newRows));
-      finishBulkImport(newRows.length, warnings, "your Word document");
+      const { rowCount, warnings } = applyImportResult(parseImportWordLines(lines, questionStatusOptions));
+      finishBulkImport(rowCount, warnings, "your Word document");
     } catch (err) {
       setImportError((err as Error).message);
     } finally {
@@ -564,7 +648,8 @@ export default function QuestionBankEditor({
       }
       const newRow: Row = {
         clientId: nextClientId(),
-        data: { ...res.input, code: "" },
+        // Keeps the source's case study (already in res.input); position is re-assigned on save.
+        data: { ...res.input, code: "", groupSeq: null },
         saved: null,
       };
       setRows((prev) => [...prev, newRow]);
@@ -596,8 +681,16 @@ export default function QuestionBankEditor({
 
     setSavingIds((prev) => new Set(prev).add(clientId));
     try {
+      // A case study that came from a bulk import is saved first so the
+      // question can be linked to a real groupId.
+      const resolved = await resolveRowCaseStudies([row]);
+      if (!resolved) {
+        setRowError(clientId, "Could not save the case study — fix it and try again.");
+        return;
+      }
+      const data: QuestionInput = { ...row.data, caseStudy: resolved[row.clientId] ?? row.data.caseStudy };
       if (row.saved) {
-        const res = await updateQuestion(row.saved.questionId, row.data);
+        const res = await updateQuestion(row.saved.questionId, data);
         if (!res.ok) {
           setRowError(clientId, res.error);
           notify(res.error, "error");
@@ -605,7 +698,7 @@ export default function QuestionBankEditor({
         }
         notify(`Question ${row.saved.code} updated.`, "success");
       } else {
-        const res = await createQuestions([row.data], lot?.lotId ?? null);
+        const res = await createQuestions([data], lot?.lotId ?? null);
         if (!res.ok) {
           setRowError(clientId, res.error);
           notify(res.error, "error");
@@ -645,7 +738,12 @@ export default function QuestionBankEditor({
     if (Object.keys(nextErrors).length > 0) return;
 
     startTransition(async () => {
-      const res = await createQuestions(unsaved.map((r) => r.data), lot?.lotId ?? null);
+      const resolved = await resolveRowCaseStudies(unsaved);
+      if (!resolved) return;
+      const res = await createQuestions(
+        unsaved.map((r) => ({ ...r.data, caseStudy: resolved[r.clientId] ?? r.data.caseStudy })),
+        lot?.lotId ?? null,
+      );
       if (!res.ok) {
         notify(res.error, "error");
         return;
@@ -671,8 +769,8 @@ export default function QuestionBankEditor({
             <BackLink href="/questions" label="Back" />
             <h1 className="mt-2 text-2xl font-semibold text-zinc-900 mb-2">Create Questions</h1>
           </div>
-          <div className="flex w-full shrink-0 flex-col gap-2 rounded-lg border border-indigo-200 bg-brand-soft px-3 py-2 sm:flex-row sm:flex-wrap sm:items-center lg:w-fit">
-            <span className="text-xs font-semibold uppercase tracking-wide text-brand sm:mr-1">
+          <div className="flex w-full shrink-0 flex-col gap-2 rounded-lg border border-brand bg-brand-soft dark:bg-zinc-300 px-3 py-2 sm:flex-row sm:flex-wrap sm:items-center lg:w-fit">
+            <span className="text-xs font-semibold uppercase tracking-wide text-brand dark:text-brand-soft sm:mr-1">
               Batch tools
             </span>
             <button className={buttonClass} onClick={() => setDefaultsOpen(true)}>
@@ -730,6 +828,7 @@ export default function QuestionBankEditor({
                 onSave={() => handleSaveRow(row.clientId)}
                 onOpenSettings={() => setSettingsForClientId(row.clientId)}
                 canRemove={!!(rows.length > 1)}
+                onOpenCaseStudy={(mode) => setCaseDrawer({ clientId: row.clientId, mode })}
               />
             ))}
           </div>
@@ -796,6 +895,14 @@ export default function QuestionBankEditor({
           onRemoveTag={(i) => removeTag(activeSettingsRow.clientId, i)}
         />
       )}
+
+      <CaseStudyDrawer
+        open={caseDrawer !== null}
+        mode={caseDrawer?.mode ?? "pick"}
+        current={rows.find((r) => r.clientId === caseDrawer?.clientId)?.data.caseStudy ?? null}
+        onClose={() => setCaseDrawer(null)}
+        onSelect={handleCaseStudySelected}
+      />
 
       <Drawer
         open={explorerOpen}
@@ -1001,6 +1108,12 @@ export default function QuestionBankEditor({
                 one is correct.
               </ImportStep>
               <ImportStep label="Explanation:">Optional — shown to students after they answer.</ImportStep>
+              <ImportStep label="CaseStudy:">
+                For a shared paragraph, put <em>CaseStudy:</em> and the paragraph before its questions —
+                every <em>Question:</em> after it uses that paragraph (extra lines continue the paragraph).
+                Optional <em>CaseTitle:</em> names it; <em>EndCaseStudy:</em> (or the next{" "}
+                <em>CaseStudy:</em>) closes it.
+              </ImportStep>
             </ul>
             <p className="text-xs text-zinc-500">
               If a question or answer runs onto a second line in your document, that&apos;s fine —
@@ -1246,6 +1359,7 @@ function QuestionRowCard({
   onSave,
   onOpenSettings,
   canRemove,
+  onOpenCaseStudy,
 }: {
   cardRef: (el: HTMLElement | null) => void;
   index: number;
@@ -1266,6 +1380,7 @@ function QuestionRowCard({
   onSave: () => void;
   onOpenSettings: () => void;
   canRemove: boolean;
+  onOpenCaseStudy: (mode: "pick" | "edit") => void;
 }) {
   const { data } = row;
   const optionBased = isOptionBasedType(data.typeCode);
@@ -1314,6 +1429,13 @@ function QuestionRowCard({
             onChange={(v) => onUpdate({ status: v ?? data.status })}
             data={statusOptions.map((o) => ({ value: o.value, label: o.displayLabel }))}
           />
+          {data.typeCode === "case_study" && (
+            <CaseStudyButton
+              caseStudy={data.caseStudy}
+              onPick={() => onOpenCaseStudy("pick")}
+              onEdit={() => onOpenCaseStudy("edit")}
+            />
+          )}
         </div>
         <div className="flex items-center gap-1.5">
           <button
@@ -1371,7 +1493,7 @@ function QuestionRowCard({
           {optionBased ? (
             <div>
               <label className={labelClass}>
-                Options ({data.typeCode === "mcq_single" ? "select one correct answer" : "select all correct answers"})
+                Options ({isSingleAnswerType(data.typeCode) ? "select one correct answer" : "select all correct answers"})
               </label>
               <div className="flex flex-col gap-1.5">
                 {data.options.map((opt, i) => {
@@ -1384,7 +1506,7 @@ function QuestionRowCard({
                         }`}
                     >
                       <input
-                        type={data.typeCode === "mcq_single" ? "radio" : "checkbox"}
+                        type={isSingleAnswerType(data.typeCode) ? "radio" : "checkbox"}
                         name={`correct-${row.clientId}`}
                         checked={isCorrect}
                         onChange={() => onToggleCorrect(opt.id)}

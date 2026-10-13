@@ -24,7 +24,7 @@ type RawServiceOption = {
   Description: string | null;
 };
 
-// Mode 4 of dbo.spMcqTeacherService — see mcq-admin/sql/spMcqTeacherService.sql.
+// Mode 4 of dbo.spMcqTeacherService — see mcq-admin/sql/spMcqTeacherService-deploy.sql.
 export async function getServiceOptions(
   category: ServiceCategory,
 ): Promise<ServiceOption[]> {

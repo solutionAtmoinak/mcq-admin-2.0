@@ -17,9 +17,17 @@ export type ExamSettings = {
   sequentialSections: boolean;
   // Student's saved answers persist and the attempt can be resumed later.
   allowResume: boolean;
+  // The student portal shuffles the question order per student once the exam is
+  // fetched. Questions that share a case study (Question.GroupId) are NOT shuffled.
+  // The shuffle itself lives in the student project, not here.
+  randomizeQuestions: boolean;
 };
 
-export const DEFAULT_EXAM_SETTINGS: ExamSettings = { sequentialSections: false, allowResume: false };
+export const DEFAULT_EXAM_SETTINGS: ExamSettings = {
+  sequentialSections: false,
+  allowResume: false,
+  randomizeQuestions: false,
+};
 
 // A "Resumable Exam" (TestKind id 14) is resumable by definition, so its
 // allowResume flag is always on — whatever the draft says.
@@ -37,11 +45,13 @@ export function effectiveExamSettings(draft: {
   testKindCode: string;
   sequentialSections: boolean;
   allowResume: boolean;
+  randomizeQuestions: boolean;
 }): ExamSettings {
   const resumable = isResumableKind(draft.testKindCode);
   return {
     sequentialSections: draft.sequentialSections && !resumable,
     allowResume: draft.allowResume || resumable,
+    randomizeQuestions: draft.randomizeQuestions,
   };
 }
 
@@ -58,6 +68,7 @@ export function parseExamSettings(raw: unknown): ExamSettings {
   return {
     sequentialSections: flag(obj.sequentialSections),
     allowResume: flag(obj.allowResume),
+    randomizeQuestions: flag(obj.randomizeQuestions),
   };
 }
 
@@ -90,7 +101,6 @@ export type BlueprintFilterJson = {
     RulesJson: {
       questionType: string;
       questions: number;
-      mandatory: number;
       marks: number;
       negative: number;
       // Optional because templates saved before per-section timing existed
@@ -138,7 +148,6 @@ export type TemplateSectionDraft = {
   name: string;
   questionType: string;
   questions: number;
-  mandatory: number;
   marks: number;
   negative: number;
   durationMin: number;
@@ -155,6 +164,7 @@ export type TemplateDraft = {
   sections: TemplateSectionDraft[];
   sequentialSections: boolean;
   allowResume: boolean;
+  randomizeQuestions: boolean;
   // Shown to the student in a T&C-style modal before they enter the exam
   // (see MockTest.Instructions) — lives only on the materialized MockTest,
   // never on a BlueprintTemplate, so it's not part of BlueprintFilterJson.
@@ -169,8 +179,7 @@ export function emptyTemplateSection(): TemplateSectionDraft {
     name: "",
     questionType: "mcq",
     questions: 0,
-    mandatory: 0,
-    marks: 4,
+    marks: 1,
     negative: 0,
     durationMin: 60,
     breakMin: 0,
@@ -231,7 +240,6 @@ export function filterJsonToTemplateDraft(filterJson: BlueprintFilterJson): Temp
       name: s.Name,
       questionType: s.RulesJson.questionType,
       questions: s.RulesJson.questions,
-      mandatory: s.RulesJson.mandatory,
       marks: s.RulesJson.marks,
       negative: s.RulesJson.negative,
       durationMin: s.RulesJson.durationMin ?? legacyDurations[i],
@@ -261,7 +269,6 @@ export function buildTemplateDraftFromExam(input: {
     name: string;
     questionType: string;
     questions: number;
-    mandatory: number;
     marks: number;
     negative: number;
     durationMin?: number;
@@ -282,7 +289,6 @@ export function buildTemplateDraftFromExam(input: {
       name: s.name,
       questionType: s.questionType,
       questions: s.questions,
-      mandatory: s.mandatory,
       marks: s.marks,
       negative: s.negative,
       durationMin: s.durationMin ?? legacyDurations[i],
@@ -309,11 +315,6 @@ export function validateShapeDraft(draft: TemplateDraft): string | null {
   for (const s of draft.sections) {
     if (!s.name.trim()) return "Every section needs a name.";
     if (s.questions <= 0) return `${s.name}: question count must be greater than 0.`;
-    // Mandatory-to-attempt can be at most the full pool (e.g. every question
-    // required) or as few as 0 — either way it can't exceed the pool size.
-    if (s.mandatory < 0 || s.mandatory > s.questions) {
-      return `${s.name}: mandatory-to-attempt count must be between 0 and ${s.questions}.`;
-    }
     if (s.marks <= 0) return `${s.name}: marks per question must be greater than 0.`;
     if (s.negative < 0) return `${s.name}: negative marks can't be below 0.`;
     if (!Number.isInteger(s.durationMin) || s.durationMin <= 0) {
@@ -349,7 +350,7 @@ export function buildFilterJsonFromDraft(draft: TemplateDraft): BlueprintFilterJ
     markingScheme: {
       Name: draft.markingSchemeName.trim() || "Standard Marking",
       RulesJson: {
-        default: { marks: draft.sections[0]?.marks ?? 4, negative: draft.sections[0]?.negative ?? 1 },
+        default: { marks: draft.sections[0]?.marks ?? 1, negative: draft.sections[0]?.negative ?? 1 },
         bySectionType,
         partialMarking: false,
         qualifyingOnly: false,
@@ -369,7 +370,6 @@ export function buildFilterJsonFromDraft(draft: TemplateDraft): BlueprintFilterJ
       RulesJson: {
         questionType: s.questionType,
         questions: s.questions,
-        mandatory: s.mandatory,
         marks: s.marks,
         negative: s.negative,
         durationMin: s.durationMin,
@@ -405,6 +405,5 @@ export type MockTestRecipe = {
     name: string;
     questionType: string;
     pool: number;
-    mandatory: number;
   }[];
 };

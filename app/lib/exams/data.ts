@@ -26,7 +26,7 @@ export type BlueprintTemplateListItem = {
   isOwner: boolean;
 };
 
-// Mode 17 of dbo.spMcqTeacherService — see mcq-admin/sql/spMcqTeacherService.sql.
+// Mode 17 of dbo.spMcqTeacherService — see mcq-admin/sql/spMcqTeacherService-deploy.sql.
 // Every franchise sees its own templates. Non-master franchises additionally
 // see (read-only) the master franchise's templates, so they can be reused as
 // a starting point for a new exam — but master's own templates are only
@@ -157,7 +157,7 @@ type RawMockTestListResult = {
 };
 
 // Mode 3. IsPersonalized rows are student-generated (see Mode 7 in
-// student-portal/sql/spMcqStudentService.sql) — they're real MockTest rows
+// student-portal/sql/spMcqStudentService-deploy.sql) — they're real MockTest rows
 // but never admin-authored, so the SP excludes them from this list; a
 // student reaches theirs directly at its own URL, never through here.
 // Franchise scoping and the EXAM_STATUS label lookup both happen inside the
@@ -212,7 +212,6 @@ export type MockTestSectionView = {
   name: string;
   questionType: string;
   pool: number;
-  mandatory: number;
   picked: number;
   marks: number;
   negative: number;
@@ -359,7 +358,6 @@ export async function getMockTestForEdit(
         name: s.name,
         questionType: s.questionType,
         pool: s.pool,
-        mandatory: s.mandatory,
         picked: questions.length,
         marks: rules?.marks ?? 0,
         negative: rules?.negative ?? 0,
@@ -425,7 +423,6 @@ export async function getMockTestDraftForEdit(
       const rules = JSON.parse(s.RulesJson) as {
         questionType: string;
         questions: number;
-        mandatory: number;
         marks: number;
         negative: number;
         durationMin?: number;
@@ -436,7 +433,6 @@ export async function getMockTestDraftForEdit(
         name: s.Name,
         questionType: rules.questionType,
         questions: rules.questions,
-        mandatory: rules.mandatory,
         marks: rules.marks,
         negative: rules.negative,
         durationMin: rules.durationMin,

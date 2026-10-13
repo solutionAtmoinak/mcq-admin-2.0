@@ -4,8 +4,9 @@
 
 import type { AttachedMedia } from "@/app/lib/auth/media";
 import { valueByLabel, type ServiceOption } from "@/app/lib/db/serviceOptions";
+import { defaultCaseStudyTitle, type CaseStudyRef, type ImportedCaseStudy } from "./caseStudy";
 
-export type QuestionTypeCode = "mcq_single" | "msq" | "integer" | "owa";
+export type QuestionTypeCode = "mcq_single" | "msq" | "integer" | "owa" | "case_study";
 
 export type OptionInput = {
   id: string;
@@ -45,9 +46,15 @@ export type QuestionInput = {
   // alongside `explanation` on the student result page, never during the
   // exam itself (explanation only ever ships inside AnswerJson, which the
   // exam-taking modes never select — see student-portal's
-  // spMcqStudentService.sql header). Absent/null means no attachment.
+  // spMcqStudentService-deploy.sql header). Absent/null means no attachment.
   explanationMedia?: AttachedMedia | null;
   tags: TagPair[];
+  // The shared paragraph a "case_study" question is asked against — see
+  // caseStudy.ts. Required for that kind, ignored (and detached on save) for
+  // every other kind. `groupSeq` is the question's position inside the case
+  // study; null/absent = appended at the end.
+  caseStudy?: CaseStudyRef | null;
+  groupSeq?: number | null;
 };
 
 export const QUESTION_TYPE_LABELS: Record<QuestionTypeCode, string> = {
@@ -55,10 +62,16 @@ export const QUESTION_TYPE_LABELS: Record<QuestionTypeCode, string> = {
   msq: "Multiple Correct (MSQ)",
   integer: "Integer Answer",
   owa: "Fill in the Blank (One Word)",
+  case_study: "Case Study",
 };
 
 export function isOptionBasedType(type: string): boolean {
-  return type === "mcq_single" || type === "msq";
+  return type === "mcq_single" || type === "msq" || type === "case_study";
+}
+
+// Option-based kinds with exactly one correct option (radio buttons).
+export function isSingleAnswerType(type: string): boolean {
+  return type === "mcq_single" || type === "case_study";
 }
 
 const OPTION_LETTERS = "ABCDEFGH";
@@ -104,6 +117,9 @@ export function emptyQuestion(
 // `referenceData.questionStatusOptions.map((o) => o.value)`) — this file has
 // no DB access of its own, so the caller resolves what counts as valid.
 export function validateQuestion(q: QuestionInput, validStatusValues: unknown[]): string | null {
+  if (q.typeCode === "case_study" && !q.caseStudy?.text.trim()) {
+    return "Choose or add a case study for this question.";
+  }
   if (!q.stem.trim()) return "Question text (stem) is required.";
   if (!Number.isInteger(q.difficulty) || q.difficulty < 1 || q.difficulty > 5) {
     return "Difficulty must be between 1 and 5.";
@@ -133,7 +149,7 @@ export function validateQuestion(q: QuestionInput, validStatusValues: unknown[])
     if (ids.size !== q.options.length) return "Option ids must be unique.";
     if (q.correctOptionIds.length === 0)
       return "Select at least one correct option.";
-    if (q.typeCode === "mcq_single" && q.correctOptionIds.length !== 1) {
+    if (isSingleAnswerType(q.typeCode) && q.correctOptionIds.length !== 1) {
       return "Single-correct questions need exactly one correct option.";
     }
     for (const c of q.correctOptionIds) {
@@ -256,6 +272,12 @@ export type ReferenceData = {
 export type ImportResult = {
   rows: QuestionInput[];
   warnings: string[];
+  // Case studies found in the import (Word "CaseStudy:" / JSON "caseStudy"),
+  // and for each entry of `rows` (same index) the `key` of the case study it
+  // belongs to, or null for a standalone question. Both are absent/empty for
+  // the Excel path, which has no case-study column.
+  caseStudies?: ImportedCaseStudy[];
+  rowCaseStudyKeys?: (string | null)[];
 };
 
 function asString(v: unknown): string | undefined {
@@ -289,7 +311,7 @@ export function parseImportJson(
   }
 
   const warnings: string[] = [];
-  const validTypes = new Set<string>(["mcq_single", "msq", "integer", "owa"]);
+  const validTypes = new Set<string>(["mcq_single", "msq", "integer", "owa", "case_study"]);
   const validStatusValues = statusOptions.map((o) => o.value);
   const statusKeyLookup = new Map<string, number | string>();
   for (const o of statusOptions) {
@@ -298,6 +320,12 @@ export function parseImportJson(
   }
   const defaultStatus =
     valueByLabel(statusOptions, "APPROVED") ?? statusOptions[0]?.value ?? 0;
+
+  // Optional per-question "caseStudy" (a paragraph string, or {title, text}):
+  // questions carrying the identical paragraph share one case study.
+  const caseStudies: ImportedCaseStudy[] = [];
+  const caseKeyByText = new Map<string, string>();
+  const rowCaseStudyKeys: (string | null)[] = [];
 
   const rows: QuestionInput[] = parsed.map((raw, idx) => {
     const r = (raw ?? {}) as Record<string, unknown>;
@@ -377,10 +405,32 @@ export function parseImportJson(
       base.correctValue = correctRaw != null ? String(correctRaw) : "";
     }
 
+    const rawCase = r.caseStudy;
+    const caseText =
+      typeof rawCase === "string"
+        ? rawCase.trim()
+        : (asString((rawCase as Record<string, unknown> | undefined)?.text) ?? "").trim();
+    if (caseText) {
+      if (isOptionBasedType(base.typeCode)) base.typeCode = "case_study";
+      let key = caseKeyByText.get(caseText);
+      if (!key) {
+        key = `json-case-${caseStudies.length + 1}`;
+        caseKeyByText.set(caseText, key);
+        const caseTitle =
+          typeof rawCase === "object" && rawCase !== null
+            ? (asString((rawCase as Record<string, unknown>).title) ?? "").trim()
+            : "";
+        caseStudies.push({ key, title: caseTitle || defaultCaseStudyTitle(caseText), text: caseText });
+      }
+      rowCaseStudyKeys.push(key);
+    } else {
+      rowCaseStudyKeys.push(null);
+    }
+
     return base;
   });
 
-  return { rows, warnings };
+  return { rows, warnings, caseStudies, rowCaseStudyKeys };
 }
 
 // ---- Excel bulk-import ----
@@ -629,11 +679,20 @@ export function parseImportExcelRows(
 //   Option: <text>           (repeat 2+ times)
 //   Correct: <1-based option number(s) or letter ids, comma-separated>
 //   Explanation: <text>      (optional)
+// Case studies (one paragraph shared by several questions) wrap the questions:
+//   CaseStudy: <paragraph text>   (opens a case study; paragraphs after it with
+//                                  no label continue the paragraph)
+//   CaseTitle: <title>            (optional, right after CaseStudy:)
+//   Question: ... Option: ... Correct: ...   (every question until the case
+//                                  study closes belongs to it)
+//   EndCaseStudy:                 (optional — closes it; a new CaseStudy: also
+//                                  closes the previous one)
 // A paragraph with no label is treated as a continuation of whichever field
 // came last (so a stem/option/explanation that wraps onto its own paragraph
 // in Word still gets picked up). Word import only supports option-based
 // questions (mcq_single/msq), same limitation as the Excel path.
-const WORD_LINE_RE = /^\s*(Question|Option|Correct|Explanation)\s*:\s*([\s\S]*)$/i;
+const WORD_LINE_RE =
+  /^\s*(End\s*Case\s*Study|Case\s*Study|Case\s*Title|Question|Option|Correct|Explanation)\s*:\s*([\s\S]*)$/i;
 
 type WordDraft = {
   stem: string;
@@ -641,6 +700,7 @@ type WordDraft = {
   correctRaw: string;
   explanation: string;
   startLine: number;
+  caseKey: string | null;
 };
 
 export function parseImportWordLines(
@@ -653,7 +713,9 @@ export function parseImportWordLines(
 
   const drafts: WordDraft[] = [];
   let current: WordDraft | null = null;
-  let lastField: "stem" | "option" | "correct" | "explanation" | null = null;
+  let lastField: "stem" | "option" | "correct" | "explanation" | "case" | "casetitle" | null = null;
+  const cases: ImportedCaseStudy[] = [];
+  let openCase: ImportedCaseStudy | null = null;
 
   function pushCurrent() {
     if (current) drafts.push(current);
@@ -666,6 +728,16 @@ export function parseImportWordLines(
       // Continuation of whatever field was last written — lets a stem,
       // option or explanation that spans multiple Word paragraphs still be
       // captured, instead of only ever reading the first paragraph of it.
+      if (lastField === "case" && openCase) {
+        // Case-study paragraphs keep their paragraph breaks (unlike the
+        // single-line fields below, which are joined with a space).
+        openCase.text += `\n${rawLine}`;
+        return;
+      }
+      if (lastField === "casetitle" && openCase) {
+        openCase.title += ` ${rawLine}`;
+        return;
+      }
       if (!current || !lastField) return; // stray text before any "Question:" — ignore
       if (lastField === "stem") current.stem += ` ${rawLine}`;
       else if (lastField === "option" && current.options.length) {
@@ -675,8 +747,30 @@ export function parseImportWordLines(
       return;
     }
 
-    const label = match[1].toLowerCase();
+    const label = match[1].toLowerCase().replace(/\s+/g, "");
     const value = match[2].trim();
+    if (label === "casestudy") {
+      pushCurrent();
+      openCase = { key: `word-case-${cases.length + 1}`, title: "", text: value };
+      cases.push(openCase);
+      lastField = "case";
+      return;
+    }
+    if (label === "casetitle") {
+      if (!openCase) {
+        warnings.push(`Line ${i + 1}: "${match[1]}:" found before any "CaseStudy:" line — ignored.`);
+        return;
+      }
+      openCase.title = value;
+      lastField = "casetitle";
+      return;
+    }
+    if (label === "endcasestudy") {
+      pushCurrent();
+      openCase = null;
+      lastField = null;
+      return;
+    }
     if (label === "question") {
       pushCurrent();
       current = {
@@ -685,6 +779,7 @@ export function parseImportWordLines(
         correctRaw: "",
         explanation: "",
         startLine: i + 1,
+        caseKey: openCase ? openCase.key : null,
       };
       lastField = "stem";
       return;
@@ -707,6 +802,7 @@ export function parseImportWordLines(
   pushCurrent();
 
   const rows: QuestionInput[] = [];
+  const rowCaseStudyKeys: (string | null)[] = [];
   drafts.forEach((d, idx) => {
     const rowNo = idx + 1;
     const near = `near line ${d.startLine}`;
@@ -761,7 +857,9 @@ export function parseImportWordLines(
 
     rows.push(
       emptyQuestion({
-        typeCode: correctOptionIds.length > 1 ? "msq" : "mcq_single",
+        // A question inside a CaseStudy: block is a case_study question
+        // (single correct option, like mcq_single).
+        typeCode: d.caseKey ? "case_study" : correctOptionIds.length > 1 ? "msq" : "mcq_single",
         status: defaultStatus,
         stem,
         options,
@@ -769,7 +867,21 @@ export function parseImportWordLines(
         explanation: d.explanation.trim(),
       }),
     );
+    rowCaseStudyKeys.push(d.caseKey);
   });
+
+  // A case study none of whose questions survived has nothing to attach to —
+  // drop it rather than create an empty paragraph, and say so.
+  const usedKeys = new Set(rowCaseStudyKeys.filter((k): k is string => !!k));
+  const caseStudies = cases.filter((c) => {
+    if (usedKeys.has(c.key)) return true;
+    warnings.push(`Case study "${c.title || c.text.slice(0, 40)}": skipped — none of its questions were valid.`);
+    return false;
+  });
+  for (const c of caseStudies) {
+    c.text = c.text.trim();
+    c.title = c.title.trim() || defaultCaseStudyTitle(c.text);
+  }
 
   if (rows.length === 0 && warnings.length === 0) {
     warnings.push(
@@ -777,7 +889,7 @@ export function parseImportWordLines(
     );
   }
 
-  return { rows, warnings };
+  return { rows, warnings, caseStudies, rowCaseStudyKeys };
 }
 
 export const IMPORT_JSON_EXAMPLE = `[
@@ -810,5 +922,23 @@ export const IMPORT_JSON_EXAMPLE = `[
       { "key": "subject", "value": "Logical Reasoning" },
       { "key": "topic", "value": "Number Series" }
     ]
+  },
+  {
+    "caseStudy": { "title": "Shop sales", "text": "A shop sold 120 pens on Monday and 150 pens on Tuesday. The price of a pen is Rs 10." },
+    "stem": "How many pens were sold in total?",
+    "options": [
+      { "id": "A", "text": "250" },
+      { "id": "B", "text": "270" }
+    ],
+    "correct": ["B"]
+  },
+  {
+    "caseStudy": { "title": "Shop sales", "text": "A shop sold 120 pens on Monday and 150 pens on Tuesday. The price of a pen is Rs 10." },
+    "stem": "What was the total revenue?",
+    "options": [
+      { "id": "A", "text": "Rs 2,700" },
+      { "id": "B", "text": "Rs 1,500" }
+    ],
+    "correct": ["A"]
   }
 ]`;

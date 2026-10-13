@@ -1,5 +1,3 @@
-USE [DBDTHMCQPRO]
-GO
 SET ANSI_NULLS ON
 GO
 SET QUOTED_IDENTIFIER ON
@@ -7,18 +5,15 @@ GO
 -- =============================================
 -- Author:		<Author, DbTeam>
 -- Create date: <Create Date, 2024-03-10 13:09:25.567>
--- Description:	Dedicated migration-only stored procedure — see
---              mcq-admin/sql/spMcqMigrationService.sql (the reference/backup
---              copy) for full per-mode documentation. Mirror every change
---              into both files.
+-- Description:	<Description, storage purpose>
 -- =============================================
 
-CREATE OR ALTER PROCEDURE [dbo].[spMcqMigrationService]
+ALTER   PROCEDURE [dbo].[spMcqMigrationService]
     @Mode int = 0,
-	@IP VARCHAR(20) = NULL,
+	@IP VARCHAR(50) = NULL,
 	@UserId NVARCHAR(450) = NULL,
 	@FranchiseId int = 0,
-	@json NVARCHAR(MAX) = NULL,
+	@json NVARCHAR(MAX) = NULL,	
     @output Nvarchar(max) OUTPUT
 AS
 BEGIN
@@ -45,6 +40,8 @@ DECLARE @CreatedOutput TABLE (Code VARCHAR(50), QuestionId BIGINT);
 DECLARE @NewId TABLE (Id BIGINT);
 
 BEGIN
+   
+    
 
 -- Mode 1: Extract one legacy section's questions as Mode 2-ready JSON
 -- (extractBySectionId). @json: {"SectionId": <int>, "QuestionIds":
@@ -368,24 +365,24 @@ BEGIN
 
         DELETE FROM @NewId
         IF @CurStatus = @ApprovedStatus
-            INSERT INTO dbo.Question (Code, QuestionTypeId, Difficulty, Status, EstSolveSec, LotId, ApprovedBy, ApprovedOn, CreatedBy, FranchiseId)
+            INSERT INTO dbo.Question (Code, QuestionTypeId, Difficulty, Status, EstSolveSec, LotId, ApprovedBy, ApprovedOn, CreatedBy, CreatedIp, FranchiseId)
             OUTPUT INSERTED.QuestionId INTO @NewId
-            VALUES (@CurCode, @CurTypeId, @CurDifficulty, @CurStatus, @CurEstSolveSec, @LotId, @UserId, GETDATE(), @UserId, @FranchiseId)
+            VALUES (@CurCode, @CurTypeId, @CurDifficulty, @CurStatus, @CurEstSolveSec, @LotId, @UserId, GETDATE(), @UserId, @IP, @FranchiseId)
         ELSE
-            INSERT INTO dbo.Question (Code, QuestionTypeId, Difficulty, Status, EstSolveSec, LotId, CreatedBy, FranchiseId)
+            INSERT INTO dbo.Question (Code, QuestionTypeId, Difficulty, Status, EstSolveSec, LotId, CreatedBy, CreatedIp, FranchiseId)
             OUTPUT INSERTED.QuestionId INTO @NewId
-            VALUES (@CurCode, @CurTypeId, @CurDifficulty, @CurStatus, @CurEstSolveSec, @LotId, @UserId, @FranchiseId)
+            VALUES (@CurCode, @CurTypeId, @CurDifficulty, @CurStatus, @CurEstSolveSec, @LotId, @UserId, @IP, @FranchiseId)
         SELECT @NewQuestionId = Id FROM @NewId
 
         SET @ContentHash = LOWER(CONVERT(CHAR(64), HASHBYTES('SHA2_256', @CurPresentationJson + '|' + @CurAnswerJson), 2))
 
         DELETE FROM @NewId
-        INSERT INTO dbo.QuestionVersion (QuestionId, VersionNo, Locale, PresentationJson, AnswerJson, MetaJson, ContentHash, ChangeNote, CreatedBy, FranchiseId)
+        INSERT INTO dbo.QuestionVersion (QuestionId, VersionNo, Locale, PresentationJson, AnswerJson, MetaJson, ContentHash, ChangeNote, CreatedBy, CreatedIp, FranchiseId)
         OUTPUT INSERTED.VersionId INTO @NewId
-        VALUES (@NewQuestionId, 1, 'en', @CurPresentationJson, @CurAnswerJson, N'{"source":"migration-service"}', @ContentHash, 'Initial version', @UserId, @FranchiseId)
+        VALUES (@NewQuestionId, 1, 'en', @CurPresentationJson, @CurAnswerJson, N'{"source":"migration-service"}', @ContentHash, 'Initial version', @UserId, @IP, @FranchiseId)
         SELECT @NewVersionId = Id FROM @NewId
 
-        UPDATE dbo.Question SET CurrentVersionId = @NewVersionId, ModifiedBy = @UserId, ModifiedOn = GETDATE() WHERE QuestionId = @NewQuestionId
+        UPDATE dbo.Question SET CurrentVersionId = @NewVersionId, ModifiedBy = @UserId, ModifiedIp = @IP, ModifiedOn = GETDATE() WHERE QuestionId = @NewQuestionId
 
         DELETE FROM @TagInput
         INSERT INTO @TagInput (TagKey, TagValue)
@@ -406,7 +403,7 @@ BEGIN
                 SET @DimCode = LOWER(LEFT(REPLACE(REPLACE(REPLACE(REPLACE(@TagKey, ' ', '_'), '-', '_'), '/', '_'), '\', '_'), 40))
                 IF @DimCode = '' SET @DimCode = 'tag'
                 SET @DimCode = @DimCode + '_' + LOWER(CONVERT(VARCHAR(8), CRYPT_GEN_RANDOM(4), 2))
-                INSERT INTO dbo.TagDimension (Code, Name, CreatedBy, FranchiseId) VALUES (@DimCode, @TagKey, @UserId, @FranchiseId)
+                INSERT INTO dbo.TagDimension (Code, Name, CreatedBy, CreatedIp, FranchiseId) VALUES (@DimCode, @TagKey, @UserId, @IP, @FranchiseId)
                 SET @DimensionId = CAST(SCOPE_IDENTITY() AS INT)
             END
 
@@ -416,20 +413,20 @@ BEGIN
             IF @TagId IS NULL
             BEGIN
                 DELETE FROM @NewId
-                INSERT INTO dbo.Tag (DimensionId, Name, CreatedBy, FranchiseId)
+                INSERT INTO dbo.Tag (DimensionId, Name, CreatedBy, CreatedIp, FranchiseId)
                 OUTPUT INSERTED.TagId INTO @NewId
-                VALUES (@DimensionId, @TagValue, @UserId, @FranchiseId)
+                VALUES (@DimensionId, @TagValue, @UserId, @IP, @FranchiseId)
                 SELECT @TagId = Id FROM @NewId
             END
 
             IF NOT EXISTS (SELECT 1 FROM QuestionTag WHERE QuestionId = @NewQuestionId AND TagId = @TagId)
-                INSERT INTO dbo.QuestionTag (TagId, QuestionId, CreatedBy, FranchiseId) VALUES (@TagId, @NewQuestionId, @UserId, @FranchiseId)
+                INSERT INTO dbo.QuestionTag (TagId, QuestionId, CreatedBy, CreatedIp, FranchiseId) VALUES (@TagId, @NewQuestionId, @UserId, @IP, @FranchiseId)
 
             SET @TagRowNo += 1
         END
 
-        INSERT INTO dbo.QuestionSearch (QuestionId, Locale, SearchText, CreatedBy, FranchiseId) VALUES (@NewQuestionId, 'en', @CurSearchText, @UserId, @FranchiseId)
-        INSERT INTO dbo.QuestionStat (QuestionId, CreatedBy, FranchiseId) VALUES (@NewQuestionId, @UserId, @FranchiseId)
+        INSERT INTO dbo.QuestionSearch (QuestionId, Locale, SearchText, CreatedBy, CreatedIp, FranchiseId) VALUES (@NewQuestionId, 'en', @CurSearchText, @UserId, @IP, @FranchiseId)
+        INSERT INTO dbo.QuestionStat (QuestionId, CreatedBy, CreatedIp, FranchiseId) VALUES (@NewQuestionId, @UserId, @IP, @FranchiseId)
         INSERT INTO @CreatedOutput (Code, QuestionId) VALUES (@CurCode, @NewQuestionId)
 
         SET @RowNo += 1
@@ -443,12 +440,6 @@ BEGIN
     COMMIT RETURN;
 END
 
--- Mode 3: Cheap id-only lookup for one legacy section (listSectionQuestionIds).
--- @json: {"SectionId": <int>}. Read-only. No joins across passage/option/
--- answer/tag tables — just MCQQuestionId — so it never times out even for a
--- section with 1000+ questions. Same franchise permission check as Mode 1.
--- The admin UI's ExtractPanel calls this first to get the full id list and
--- total count, then pages through them via Mode 1's QuestionIds filter.
 if(@Mode = 3)
 begin
     SELECT @SectionId = SectionId FROM OPENJSON(@json) WITH (SectionId INT)
@@ -477,9 +468,9 @@ begin
         SELECT 1 AS ID,
            200 AS statuscode,
            (
-                select
-                    MCQQuestionId
-                from
+                select 
+                    MCQQuestionId 
+                from 
                 DBDTHLMSPro..TblMasterMCQ4Question
                 where MCQSectionId = @SectionId
                 and ISDeleted = 0
@@ -493,8 +484,10 @@ END
 SET @output = (SELECT 1 AS ID, 400 AS statuscode, 'Unknown mode.' AS response FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER);
 COMMIT RETURN;
 
+
+	
 END
-COMMIT TRANSACTION
+COMMIT TRANSACTION 
 
     END TRY
     BEGIN CATCH

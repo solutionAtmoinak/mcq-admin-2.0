@@ -7,14 +7,19 @@ GO
 -- Create date: <Create Date, 2024-03-10 13:09:25.567>
 -- Description:	<Description, storage purpose>
 -- Modes 3-32 and 34 added by Claude Code (mcq-admin Prisma-removal migration) —
--- see mcq-admin/sql/spMcqTeacherService.sql in the repo for per-mode docs.
+-- see mcq-admin/sql/spMcqTeacherService-deploy.sql in the repo for per-mode docs.
+-- Mode 39 (paginated question-lot list) added after the case-study modes.
+-- Modes 40-44 (tag / tag-dimension list, detail, rename, create from key -> value pairs) added after that.
+-- Modes 45-47 (exam attempts report, its exam filter options, delete attempt) added after that.
+-- Modes 35-38 (case studies / shared paragraphs) added later; Modes 7, 11, 13, 14
+-- and 30 also carry GroupId/GroupSeq/GroupVersionId.
 -- (Mode 33, the one-off TblMasterMCQ4Question bulk migration, was removed
 -- from here — superseded by dbo.spMcqMigrationService's Mode 2.)
 -- =============================================
 
 ALTER PROCEDURE [dbo].[spMcqTeacherService]
     @Mode int = 0,
-	@IP VARCHAR(20) = NULL,
+	@IP VARCHAR(50) = NULL,
 	@UserId NVARCHAR(450) = NULL,
 	@FranchiseId int = 0,
 	@json NVARCHAR(MAX) = NULL,
@@ -58,18 +63,29 @@ DECLARE
     @OverCapacityResolution VARCHAR(10), @ExamName NVARCHAR(200),
     @MarkingSchemeName NVARCHAR(150), @TotalMarks DECIMAL(6,2), @DurationMin INT,
     @ToStatus2 INT, @PackagesCsv NVARCHAR(MAX), @PackageId BIGINT,
-    @QuestionIdsCsv NVARCHAR(MAX), @QuestionsJson NVARCHAR(MAX), @ItemsJson NVARCHAR(MAX);
+    @QuestionIdsCsv NVARCHAR(MAX), @QuestionsJson NVARCHAR(MAX), @ItemsJson NVARCHAR(MAX),
+    @GroupId BIGINT, @GroupVersionId BIGINT, @GroupCode VARCHAR(50), @GroupTitle NVARCHAR(300),
+    @GroupContextJson NVARCHAR(MAX), @GroupSearchText NVARCHAR(4000),
+    @CurGroupId BIGINT, @CurGroupSeq INT, @SetGroup BIT,
+    @DimName NVARCHAR(100), @PairsJson NVARCHAR(MAX),
+    @DimsCreated INT, @TagsCreated INT, @TagsExisting INT, @AttemptFilter VARCHAR(20), @AttemptId BIGINT;
 
 -- T-SQL does not allow a TABLE variable declaration inside the same
 -- comma-separated DECLARE list as scalar variables — each one needs its
 -- own standalone DECLARE statement.
-DECLARE @QInput TABLE (RowNo INT IDENTITY(1,1), Code NVARCHAR(50), TypeCode VARCHAR(50), Difficulty TINYINT, Status INT, EstSolveSec SMALLINT, PresentationJson NVARCHAR(MAX), AnswerJson NVARCHAR(MAX), SearchText NVARCHAR(MAX), TagsJson NVARCHAR(MAX));
+DECLARE @QInput TABLE (RowNo INT IDENTITY(1,1), Code NVARCHAR(50), TypeCode VARCHAR(50), Difficulty TINYINT, Status INT, EstSolveSec SMALLINT, PresentationJson NVARCHAR(MAX), AnswerJson NVARCHAR(MAX), SearchText NVARCHAR(MAX), TagsJson NVARCHAR(MAX), GroupId BIGINT, GroupSeq INT);
 DECLARE @TagInput TABLE (RowNo INT IDENTITY(1,1), TagKey NVARCHAR(200), TagValue NVARCHAR(200));
 DECLARE @CreatedOutput TABLE (Code VARCHAR(50), QuestionId BIGINT);
 DECLARE @NewId TABLE (Id BIGINT);
 DECLARE @SectionInput TABLE (RowNo INT IDENTITY(1,1), SectionIdText VARCHAR(20), SeqNo INT, Name NVARCHAR(100), RulesJson NVARCHAR(MAX));
 DECLARE @CurSections TABLE (SectionId BIGINT, SeqNo INT, Kept BIT DEFAULT 0);
 DECLARE @QuestionIdsInput TABLE (RowNo INT IDENTITY(1,1), QuestionId BIGINT);
+-- Per-tag question counts to add to / take off dbo.MockTestTag (Modes 23, 30, 31).
+DECLARE @TagDelta TABLE (DimensionId INT, TagId BIGINT, Cnt INT);
+-- A question's live tag set before / after an edit, and how many live slots of it each exam has (Mode 14).
+DECLARE @QTagOld TABLE (DimensionId INT, TagId BIGINT);
+DECLARE @QTagNew TABLE (DimensionId INT, TagId BIGINT);
+DECLARE @QSlots TABLE (MockTestId BIGINT, Slots INT);
 DECLARE @OrderedIdsInput TABLE (RowNo INT IDENTITY(1,1), QuestionId BIGINT);
 
     -- teacher exam panel url fro admin panel
@@ -333,11 +349,12 @@ BEGIN
                 SELECT t3.Name FROM QuestionTag qt3 JOIN Tag t3 ON t3.TagId = qt3.TagId
                 WHERE qt3.QuestionId = q.QuestionId AND qt3.IsDeleted = 0 FOR JSON PATH, INCLUDE_NULL_VALUES
             ) AS TagNames,
-            q.CreatedOn, ql.LotNo
+            q.CreatedOn, ql.LotNo, CAST(q.GroupId AS VARCHAR(20)) AS GroupId, qg.Code AS GroupCode
         FROM Question q
         JOIN QuestionType qt ON qt.QuestionTypeId = q.QuestionTypeId
         LEFT JOIN QuestionVersion qv ON qv.VersionId = q.CurrentVersionId
         LEFT JOIN QuestionLot ql ON ql.LotId = q.LotId
+        LEFT JOIN QuestionGroup qg ON qg.GroupId = q.GroupId
         WHERE q.IsDeleted = 0 AND q.FranchiseId = @FranchiseId
           AND (@TypeId IS NULL OR q.QuestionTypeId = @TypeId)
           AND (@Difficulty IS NULL OR q.Difficulty = @Difficulty)
@@ -494,7 +511,7 @@ BEGIN
                 CAST(q.QuestionId AS VARCHAR(20)) AS QuestionId, q.Code, qt.Code AS TypeCode, qt.Name AS TypeName,
                 q.Status, q.Difficulty, q.EstSolveSec, qv.VersionNo,
                 JSON_QUERY(qv.PresentationJson) AS Presentation, JSON_QUERY(qv.AnswerJson) AS Answer,
-                q.CreatedBy, q.CreatedOn, ql.LotNo,
+                q.CreatedBy, q.CreatedOn, ql.LotNo, CAST(q.GroupId AS VARCHAR(20)) AS GroupId, q.GroupSeq,
                 JSON_QUERY((
                     SELECT td4.Name AS DimensionName, t4.Name AS TagName
                     FROM QuestionTag qt4
@@ -536,9 +553,9 @@ BEGIN
     END
 
     DELETE FROM @NewId
-    INSERT INTO dbo.QuestionLot (LotNo, CreatedBy, FranchiseId)
+    INSERT INTO dbo.QuestionLot (LotNo, CreatedBy, CreatedIp, FranchiseId)
     OUTPUT INSERTED.LotId INTO @NewId
-    VALUES (@LotNo, @UserId, @FranchiseId)
+    VALUES (@LotNo, @UserId, @IP, @FranchiseId)
     SELECT @LotId = Id FROM @NewId
 
     SET @output = (
@@ -589,13 +606,13 @@ BEGIN
     IF @QuestionsJson IS NOT NULL AND ISJSON(@QuestionsJson) = 0 SET @QuestionsJson = NULL
 
     DELETE FROM @QInput
-    INSERT INTO @QInput (Code, TypeCode, Difficulty, Status, EstSolveSec, PresentationJson, AnswerJson, SearchText, TagsJson)
-    SELECT Code, TypeCode, Difficulty, Status, EstSolveSec, PresentationJson, AnswerJson, SearchText, COALESCE(Tags, TagsStr)
+    INSERT INTO @QInput (Code, TypeCode, Difficulty, Status, EstSolveSec, PresentationJson, AnswerJson, SearchText, TagsJson, GroupId, GroupSeq)
+    SELECT Code, TypeCode, Difficulty, Status, EstSolveSec, PresentationJson, AnswerJson, SearchText, COALESCE(Tags, TagsStr), GroupId, GroupSeq
     FROM OPENJSON(@QuestionsJson)
     WITH (
         Code NVARCHAR(50), TypeCode VARCHAR(50), Difficulty TINYINT, Status INT, EstSolveSec SMALLINT,
         PresentationJson NVARCHAR(MAX), AnswerJson NVARCHAR(MAX), SearchText NVARCHAR(MAX),
-        Tags NVARCHAR(MAX) AS JSON, TagsStr NVARCHAR(MAX) '$.Tags'
+        Tags NVARCHAR(MAX) AS JSON, TagsStr NVARCHAR(MAX) '$.Tags', GroupId BIGINT, GroupSeq INT
     )
 
     SELECT @Total = COUNT(*) FROM @QInput
@@ -627,6 +644,12 @@ BEGIN
 
     SELECT @ApprovedStatus = TRY_CAST(ServiceValue AS INT) FROM _InternalService WHERE Category = 'QUESTION_STATUS' AND ServiceLabel = 'APPROVED' AND IsActive = 1
 
+    IF EXISTS (SELECT 1 FROM @QInput qi WHERE qi.GroupId IS NOT NULL AND NOT EXISTS (SELECT 1 FROM QuestionGroup g WHERE g.GroupId = qi.GroupId AND g.IsDeleted = 0 AND g.FranchiseId = @FranchiseId))
+    BEGIN
+        SET @output = (SELECT 1 AS ID, 404 AS statuscode, 'One or more selected case studies could not be found.' AS response FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER);
+        COMMIT RETURN;
+    END
+
     DELETE FROM @CreatedOutput
     SELECT @RowNo = MIN(RowNo), @MaxRowNo = MAX(RowNo) FROM @QInput
     WHILE @RowNo IS NOT NULL AND @RowNo <= @MaxRowNo
@@ -634,8 +657,12 @@ BEGIN
         SELECT
             @CurCode = Code, @CurTypeCode = TypeCode, @CurDifficulty = Difficulty, @CurStatus = Status,
             @CurEstSolveSec = EstSolveSec, @CurPresentationJson = PresentationJson, @CurAnswerJson = AnswerJson,
-            @CurSearchText = SearchText, @CurTagsJson = TagsJson
+            @CurSearchText = SearchText, @CurTagsJson = TagsJson, @CurGroupId = GroupId, @CurGroupSeq = GroupSeq
         FROM @QInput WHERE RowNo = @RowNo
+
+        -- Appended to the end of its case study unless the caller named a position.
+        IF @CurGroupId IS NOT NULL AND @CurGroupSeq IS NULL
+            SELECT @CurGroupSeq = ISNULL(MAX(GroupSeq), 0) + 1 FROM Question WHERE GroupId = @CurGroupId AND IsDeleted = 0
 
         SELECT @CurTypeId = QuestionTypeId FROM QuestionType WHERE Code = @CurTypeCode AND IsDeleted = 0
 
@@ -653,24 +680,24 @@ BEGIN
 
         DELETE FROM @NewId
         IF @CurStatus = @ApprovedStatus
-            INSERT INTO dbo.Question (Code, QuestionTypeId, Difficulty, Status, EstSolveSec, LotId, ApprovedBy, ApprovedOn, CreatedBy, FranchiseId)
+            INSERT INTO dbo.Question (Code, QuestionTypeId, Difficulty, Status, EstSolveSec, LotId, GroupId, GroupSeq, ApprovedBy, ApprovedOn, CreatedBy, CreatedIp, FranchiseId)
             OUTPUT INSERTED.QuestionId INTO @NewId
-            VALUES (@CurCode, @CurTypeId, @CurDifficulty, @CurStatus, @CurEstSolveSec, @LotId, @UserId, GETDATE(), @UserId, @FranchiseId)
+            VALUES (@CurCode, @CurTypeId, @CurDifficulty, @CurStatus, @CurEstSolveSec, @LotId, @CurGroupId, @CurGroupSeq, @UserId, GETDATE(), @UserId, @IP, @FranchiseId)
         ELSE
-            INSERT INTO dbo.Question (Code, QuestionTypeId, Difficulty, Status, EstSolveSec, LotId, CreatedBy, FranchiseId)
+            INSERT INTO dbo.Question (Code, QuestionTypeId, Difficulty, Status, EstSolveSec, LotId, GroupId, GroupSeq, CreatedBy, CreatedIp, FranchiseId)
             OUTPUT INSERTED.QuestionId INTO @NewId
-            VALUES (@CurCode, @CurTypeId, @CurDifficulty, @CurStatus, @CurEstSolveSec, @LotId, @UserId, @FranchiseId)
+            VALUES (@CurCode, @CurTypeId, @CurDifficulty, @CurStatus, @CurEstSolveSec, @LotId, @CurGroupId, @CurGroupSeq, @UserId, @IP, @FranchiseId)
         SELECT @NewQuestionId = Id FROM @NewId
 
         SET @ContentHash = LOWER(CONVERT(CHAR(64), HASHBYTES('SHA2_256', @CurPresentationJson + '|' + @CurAnswerJson), 2))
 
         DELETE FROM @NewId
-        INSERT INTO dbo.QuestionVersion (QuestionId, VersionNo, Locale, PresentationJson, AnswerJson, MetaJson, ContentHash, ChangeNote, CreatedBy, FranchiseId)
+        INSERT INTO dbo.QuestionVersion (QuestionId, VersionNo, Locale, PresentationJson, AnswerJson, MetaJson, ContentHash, ChangeNote, CreatedBy, CreatedIp, FranchiseId)
         OUTPUT INSERTED.VersionId INTO @NewId
-        VALUES (@NewQuestionId, 1, 'en', @CurPresentationJson, @CurAnswerJson, N'{"source":"question-bank-ui"}', @ContentHash, 'Initial version', @UserId, @FranchiseId)
+        VALUES (@NewQuestionId, 1, 'en', @CurPresentationJson, @CurAnswerJson, N'{"source":"question-bank-ui"}', @ContentHash, 'Initial version', @UserId, @IP, @FranchiseId)
         SELECT @NewVersionId = Id FROM @NewId
 
-        UPDATE dbo.Question SET CurrentVersionId = @NewVersionId, ModifiedBy = @UserId, ModifiedOn = GETDATE() WHERE QuestionId = @NewQuestionId
+        UPDATE dbo.Question SET CurrentVersionId = @NewVersionId, ModifiedBy = @UserId, ModifiedIp = @IP, ModifiedOn = GETDATE() WHERE QuestionId = @NewQuestionId
 
         DELETE FROM @TagInput
         INSERT INTO @TagInput (TagKey, TagValue)
@@ -691,7 +718,7 @@ BEGIN
                 SET @DimCode = LOWER(LEFT(REPLACE(REPLACE(REPLACE(REPLACE(@TagKey, ' ', '_'), '-', '_'), '/', '_'), '\', '_'), 40))
                 IF @DimCode = '' SET @DimCode = 'tag'
                 SET @DimCode = @DimCode + '_' + LOWER(CONVERT(VARCHAR(8), CRYPT_GEN_RANDOM(4), 2))
-                INSERT INTO dbo.TagDimension (Code, Name, CreatedBy, FranchiseId) VALUES (@DimCode, @TagKey, @UserId, @FranchiseId)
+                INSERT INTO dbo.TagDimension (Code, Name, CreatedBy, CreatedIp, FranchiseId) VALUES (@DimCode, @TagKey, @UserId, @IP, @FranchiseId)
                 SET @DimensionId = CAST(SCOPE_IDENTITY() AS INT)
             END
 
@@ -701,20 +728,20 @@ BEGIN
             IF @TagId IS NULL
             BEGIN
                 DELETE FROM @NewId
-                INSERT INTO dbo.Tag (DimensionId, Name, CreatedBy, FranchiseId)
+                INSERT INTO dbo.Tag (DimensionId, Name, CreatedBy, CreatedIp, FranchiseId)
                 OUTPUT INSERTED.TagId INTO @NewId
-                VALUES (@DimensionId, @TagValue, @UserId, @FranchiseId)
+                VALUES (@DimensionId, @TagValue, @UserId, @IP, @FranchiseId)
                 SELECT @TagId = Id FROM @NewId
             END
 
             IF NOT EXISTS (SELECT 1 FROM QuestionTag WHERE QuestionId = @NewQuestionId AND TagId = @TagId)
-                INSERT INTO dbo.QuestionTag (TagId, QuestionId, CreatedBy, FranchiseId) VALUES (@TagId, @NewQuestionId, @UserId, @FranchiseId)
+                INSERT INTO dbo.QuestionTag (TagId, QuestionId, CreatedBy, CreatedIp, FranchiseId) VALUES (@TagId, @NewQuestionId, @UserId, @IP, @FranchiseId)
 
             SET @TagRowNo += 1
         END
 
-        INSERT INTO dbo.QuestionSearch (QuestionId, Locale, SearchText, CreatedBy, FranchiseId) VALUES (@NewQuestionId, 'en', @CurSearchText, @UserId, @FranchiseId)
-        INSERT INTO dbo.QuestionStat (QuestionId, CreatedBy, FranchiseId) VALUES (@NewQuestionId, @UserId, @FranchiseId)
+        INSERT INTO dbo.QuestionSearch (QuestionId, Locale, SearchText, CreatedBy, CreatedIp, FranchiseId) VALUES (@NewQuestionId, 'en', @CurSearchText, @UserId, @IP, @FranchiseId)
+        INSERT INTO dbo.QuestionStat (QuestionId, CreatedBy, CreatedIp, FranchiseId) VALUES (@NewQuestionId, @UserId, @IP, @FranchiseId)
         INSERT INTO @CreatedOutput (Code, QuestionId) VALUES (@CurCode, @NewQuestionId)
 
         SET @RowNo += 1
@@ -733,9 +760,13 @@ END
 -- @json: {"QuestionId": <bigint>, "TypeCode": "...", "Difficulty": <tinyint>,
 -- "EstSolveSec": <smallint> | null, "PresentationJson": "...",
 -- "AnswerJson": "...", "SearchText": "...", "ChangeNote": "..." | null,
--- "Tags": [{"Key","Value"}]}. Status is deliberately left untouched here —
+-- "Tags": [{"Key","Value"}], "SetGroup": true | absent, "GroupId": <bigint> | null,
+-- "GroupSeq": <int> | null}. SetGroup=true (re)attaches the question to the case
+-- study GroupId, or detaches it when GroupId is null; without SetGroup the
+-- question's case study is left as-is. Status is deliberately left untouched here —
 -- see Mode 15 for that. Same find-or-create tag resolution as Mode 13
--- (duplicated rather than shared — see that mode's header).
+-- (duplicated rather than shared — see that mode's header). Also keeps dbo.MockTestTag in step for
+-- every teacher exam the question is in (tag set before vs after the edit).
 if(@Mode = 14)
 BEGIN
     SELECT
@@ -745,7 +776,16 @@ BEGIN
         QuestionId BIGINT, TypeCode VARCHAR(50), Difficulty TINYINT, EstSolveSec SMALLINT,
         PresentationJson NVARCHAR(MAX), AnswerJson NVARCHAR(MAX), SearchText NVARCHAR(MAX), ChangeNote NVARCHAR(400)
     )
+    -- The .NET executor can hand Tags over as a JSON *string* instead of a real
+    -- array (see Mode 13); accept either, or the edit would wipe the tags and
+    -- attach none.
+    SET @CurTagsJson = NULL
     SELECT @CurTagsJson = Tags FROM OPENJSON(@json) WITH (Tags NVARCHAR(MAX) AS JSON)
+    IF @CurTagsJson IS NULL
+        SELECT @CurTagsJson = Tags FROM OPENJSON(@json) WITH (Tags NVARCHAR(MAX) '$.Tags')
+    IF @CurTagsJson IS NOT NULL AND ISJSON(@CurTagsJson) = 0 SET @CurTagsJson = NULL
+    SELECT @SetGroup = ISNULL(SetGroup, 0), @CurGroupId = GroupId, @CurGroupSeq = GroupSeq
+    FROM OPENJSON(@json) WITH (SetGroup BIT, GroupId BIGINT, GroupSeq INT)
 
     IF NOT EXISTS (SELECT 1 FROM Question WHERE QuestionId = @QuestionId AND IsDeleted = 0 AND FranchiseId = @FranchiseId)
     BEGIN
@@ -759,19 +799,46 @@ BEGIN
         COMMIT RETURN;
     END
 
+    IF @SetGroup = 1 AND @CurGroupId IS NOT NULL AND NOT EXISTS (SELECT 1 FROM QuestionGroup WHERE GroupId = @CurGroupId AND IsDeleted = 0 AND FranchiseId = @FranchiseId)
+    BEGIN
+        SET @output = (SELECT 1 AS ID, 404 AS statuscode, 'Case study not found.' AS response FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER);
+        COMMIT RETURN;
+    END
+
     SELECT @NextVersionNo = ISNULL(MAX(VersionNo), 0) + 1 FROM QuestionVersion WHERE QuestionId = @QuestionId
     SET @ContentHash = LOWER(CONVERT(CHAR(64), HASHBYTES('SHA2_256', @CurPresentationJson + '|' + @CurAnswerJson), 2))
 
     DELETE FROM @NewId
-    INSERT INTO dbo.QuestionVersion (QuestionId, VersionNo, Locale, PresentationJson, AnswerJson, MetaJson, ContentHash, ChangeNote, CreatedBy, FranchiseId)
+    INSERT INTO dbo.QuestionVersion (QuestionId, VersionNo, Locale, PresentationJson, AnswerJson, MetaJson, ContentHash, ChangeNote, CreatedBy, CreatedIp, FranchiseId)
     OUTPUT INSERTED.VersionId INTO @NewId
-    VALUES (@QuestionId, @NextVersionNo, 'en', @CurPresentationJson, @CurAnswerJson, N'{"source":"question-bank-ui"}', @ContentHash, ISNULL(NULLIF(LTRIM(RTRIM(@ChangeNote)), ''), 'Edited via question bank UI'), @UserId, @FranchiseId)
+    VALUES (@QuestionId, @NextVersionNo, 'en', @CurPresentationJson, @CurAnswerJson, N'{"source":"question-bank-ui"}', @ContentHash, ISNULL(NULLIF(LTRIM(RTRIM(@ChangeNote)), ''), 'Edited via question bank UI'), @UserId, @IP, @FranchiseId)
     SELECT @NewVersionId = Id FROM @NewId
 
     UPDATE dbo.Question
     SET QuestionTypeId = @CurTypeId, Difficulty = @CurDifficulty, EstSolveSec = @CurEstSolveSec,
-        CurrentVersionId = @NewVersionId, ModifiedBy = @UserId, ModifiedOn = GETDATE()
+        CurrentVersionId = @NewVersionId, ModifiedBy = @UserId, ModifiedIp = @IP, ModifiedOn = GETDATE()
     WHERE QuestionId = @QuestionId
+
+    IF @SetGroup = 1
+    BEGIN
+        IF @CurGroupId IS NULL
+            UPDATE dbo.Question SET GroupId = NULL, GroupSeq = NULL WHERE QuestionId = @QuestionId
+        ELSE
+        BEGIN
+            -- Keep the current position when staying in the same case study; otherwise go to its end.
+            IF @CurGroupSeq IS NULL
+                SELECT @CurGroupSeq = ISNULL(
+                    (SELECT GroupSeq FROM Question WHERE QuestionId = @QuestionId AND GroupId = @CurGroupId),
+                    (SELECT ISNULL(MAX(GroupSeq), 0) + 1 FROM Question WHERE GroupId = @CurGroupId AND IsDeleted = 0))
+            UPDATE dbo.Question SET GroupId = @CurGroupId, GroupSeq = @CurGroupSeq WHERE QuestionId = @QuestionId
+        END
+    END
+
+    -- MockTestTag upkeep: remember the tag set before it is replaced (diffed against the new set below).
+    DELETE FROM @QTagOld
+    INSERT INTO @QTagOld (DimensionId, TagId)
+    SELECT t.DimensionId, qt.TagId FROM QuestionTag qt JOIN Tag t ON t.TagId = qt.TagId AND t.IsDeleted = 0
+    WHERE qt.QuestionId = @QuestionId AND qt.IsDeleted = 0 AND qt.IsActive = 1
 
     DELETE FROM QuestionTag WHERE QuestionId = @QuestionId
 
@@ -794,7 +861,7 @@ BEGIN
             SET @DimCode = LOWER(LEFT(REPLACE(REPLACE(REPLACE(REPLACE(@TagKey, ' ', '_'), '-', '_'), '/', '_'), '\', '_'), 40))
             IF @DimCode = '' SET @DimCode = 'tag'
             SET @DimCode = @DimCode + '_' + LOWER(CONVERT(VARCHAR(8), CRYPT_GEN_RANDOM(4), 2))
-            INSERT INTO dbo.TagDimension (Code, Name, CreatedBy, FranchiseId) VALUES (@DimCode, @TagKey, @UserId, @FranchiseId)
+            INSERT INTO dbo.TagDimension (Code, Name, CreatedBy, CreatedIp, FranchiseId) VALUES (@DimCode, @TagKey, @UserId, @IP, @FranchiseId)
             SET @DimensionId = CAST(SCOPE_IDENTITY() AS INT)
         END
 
@@ -804,22 +871,65 @@ BEGIN
         IF @TagId IS NULL
         BEGIN
             DELETE FROM @NewId
-            INSERT INTO dbo.Tag (DimensionId, Name, CreatedBy, FranchiseId)
+            INSERT INTO dbo.Tag (DimensionId, Name, CreatedBy, CreatedIp, FranchiseId)
             OUTPUT INSERTED.TagId INTO @NewId
-            VALUES (@DimensionId, @TagValue, @UserId, @FranchiseId)
+            VALUES (@DimensionId, @TagValue, @UserId, @IP, @FranchiseId)
             SELECT @TagId = Id FROM @NewId
         END
 
         IF NOT EXISTS (SELECT 1 FROM QuestionTag WHERE QuestionId = @QuestionId AND TagId = @TagId)
-            INSERT INTO dbo.QuestionTag (TagId, QuestionId, CreatedBy, FranchiseId) VALUES (@TagId, @QuestionId, @UserId, @FranchiseId)
+            INSERT INTO dbo.QuestionTag (TagId, QuestionId, CreatedBy, CreatedIp, FranchiseId) VALUES (@TagId, @QuestionId, @UserId, @IP, @FranchiseId)
 
         SET @TagRowNo += 1
     END
 
+    -- MockTestTag (exam <-> tag direct relation): if this question sits in any teacher exam, move the exam's
+    -- tag counts with the edit. Tags dropped -> QuestionCount - slots (hard DELETE at 0), tags gained -> + slots.
+    -- Slots = the question's live TestQuestion rows in that exam; personalized mocks are never in the table.
+    DELETE FROM @QTagNew
+    INSERT INTO @QTagNew (DimensionId, TagId)
+    SELECT t.DimensionId, qt.TagId FROM QuestionTag qt JOIN Tag t ON t.TagId = qt.TagId AND t.IsDeleted = 0
+    WHERE qt.QuestionId = @QuestionId AND qt.IsDeleted = 0 AND qt.IsActive = 1
+
+    DELETE FROM @QSlots
+    INSERT INTO @QSlots (MockTestId, Slots)
+    SELECT tq.MockTestId, COUNT(*)
+    FROM TestQuestion tq JOIN MockTest mt ON mt.MockTestId = tq.MockTestId AND mt.IsDeleted = 0 AND mt.IsPersonalized = 0 AND mt.FranchiseId = @FranchiseId
+    WHERE tq.QuestionId = @QuestionId AND tq.IsDeleted = 0
+    GROUP BY tq.MockTestId
+
+    IF EXISTS (SELECT 1 FROM @QSlots)
+    BEGIN
+        DELETE mtt FROM dbo.MockTestTag mtt
+        JOIN @QSlots s ON s.MockTestId = mtt.MockTestId
+        JOIN @QTagOld o ON o.DimensionId = mtt.DimensionId AND o.TagId = mtt.TagId
+        WHERE mtt.FranchiseId = @FranchiseId AND mtt.QuestionCount <= s.Slots
+          AND NOT EXISTS (SELECT 1 FROM @QTagNew n WHERE n.TagId = o.TagId)
+        UPDATE mtt SET QuestionCount = mtt.QuestionCount - s.Slots, ModifiedBy = @UserId, ModifiedIp = @IP, ModifiedOn = GETDATE()
+        FROM dbo.MockTestTag mtt
+        JOIN @QSlots s ON s.MockTestId = mtt.MockTestId
+        JOIN @QTagOld o ON o.DimensionId = mtt.DimensionId AND o.TagId = mtt.TagId
+        WHERE mtt.FranchiseId = @FranchiseId AND mtt.QuestionCount > s.Slots
+          AND NOT EXISTS (SELECT 1 FROM @QTagNew n WHERE n.TagId = o.TagId)
+
+        UPDATE mtt SET QuestionCount = mtt.QuestionCount + s.Slots, ModifiedBy = @UserId, ModifiedIp = @IP, ModifiedOn = GETDATE()
+        FROM dbo.MockTestTag mtt
+        JOIN @QSlots s ON s.MockTestId = mtt.MockTestId
+        JOIN @QTagNew n ON n.DimensionId = mtt.DimensionId AND n.TagId = mtt.TagId
+        WHERE mtt.FranchiseId = @FranchiseId
+          AND NOT EXISTS (SELECT 1 FROM @QTagOld o WHERE o.TagId = n.TagId)
+        INSERT INTO dbo.MockTestTag (FranchiseId, MockTestId, DimensionId, TagId, QuestionCount, CreatedBy, CreatedIp)
+        SELECT @FranchiseId, s.MockTestId, n.DimensionId, n.TagId, s.Slots, @UserId, @IP
+        FROM @QSlots s CROSS JOIN @QTagNew n
+        WHERE NOT EXISTS (SELECT 1 FROM @QTagOld o WHERE o.TagId = n.TagId)
+          AND NOT EXISTS (SELECT 1 FROM dbo.MockTestTag mtt WHERE mtt.FranchiseId = @FranchiseId AND mtt.MockTestId = s.MockTestId
+                          AND mtt.DimensionId = n.DimensionId AND mtt.TagId = n.TagId)
+    END
+
     IF EXISTS (SELECT 1 FROM QuestionSearch WHERE QuestionId = @QuestionId AND Locale = 'en')
-        UPDATE dbo.QuestionSearch SET SearchText = @CurSearchText, ModifiedBy = @UserId, ModifiedOn = GETDATE() WHERE QuestionId = @QuestionId AND Locale = 'en'
+        UPDATE dbo.QuestionSearch SET SearchText = @CurSearchText, ModifiedBy = @UserId, ModifiedIp = @IP, ModifiedOn = GETDATE() WHERE QuestionId = @QuestionId AND Locale = 'en'
     ELSE
-        INSERT INTO dbo.QuestionSearch (QuestionId, Locale, SearchText, CreatedBy, FranchiseId) VALUES (@QuestionId, 'en', @CurSearchText, @UserId, @FranchiseId)
+        INSERT INTO dbo.QuestionSearch (QuestionId, Locale, SearchText, CreatedBy, CreatedIp, FranchiseId) VALUES (@QuestionId, 'en', @CurSearchText, @UserId, @IP, @FranchiseId)
 
     SET @output = (SELECT 1 AS ID, 200 AS statuscode, 'OK' AS response FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER);
     COMMIT RETURN;
@@ -850,13 +960,13 @@ BEGIN
     SELECT @ApprovedStatus = TRY_CAST(ServiceValue AS INT) FROM _InternalService WHERE Category = 'QUESTION_STATUS' AND ServiceLabel = 'APPROVED' AND IsActive = 1
 
     IF @ToStatus = @ApprovedStatus
-        UPDATE dbo.Question SET Status = @ToStatus, ApprovedBy = @UserId, ApprovedOn = GETDATE(), ModifiedBy = @UserId, ModifiedOn = GETDATE() WHERE QuestionId = @QuestionId
+        UPDATE dbo.Question SET Status = @ToStatus, ApprovedBy = @UserId, ApprovedOn = GETDATE(), ModifiedBy = @UserId, ModifiedIp = @IP, ModifiedOn = GETDATE() WHERE QuestionId = @QuestionId
     ELSE
-        UPDATE dbo.Question SET Status = @ToStatus, ModifiedBy = @UserId, ModifiedOn = GETDATE() WHERE QuestionId = @QuestionId
+        UPDATE dbo.Question SET Status = @ToStatus, ModifiedBy = @UserId, ModifiedIp = @IP, ModifiedOn = GETDATE() WHERE QuestionId = @QuestionId
 
     IF @ExistingVersionId IS NOT NULL
-        INSERT INTO dbo.ReviewAction (QuestionId, VersionId, FromStatus, ToStatus, Comment, CreatedBy, FranchiseId)
-        VALUES (@QuestionId, @ExistingVersionId, @ExistingStatus, @ToStatus, NULLIF(LTRIM(RTRIM(@Comment)), ''), @UserId, @FranchiseId)
+        INSERT INTO dbo.ReviewAction (QuestionId, VersionId, FromStatus, ToStatus, Comment, CreatedBy, CreatedIp, FranchiseId)
+        VALUES (@QuestionId, @ExistingVersionId, @ExistingStatus, @ToStatus, NULLIF(LTRIM(RTRIM(@Comment)), ''), @UserId, @IP, @FranchiseId)
 
     SET @output = (SELECT 1 AS ID, 200 AS statuscode, 'OK' AS response FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER);
     COMMIT RETURN;
@@ -873,7 +983,7 @@ BEGIN
         COMMIT RETURN;
     END
 
-    UPDATE dbo.Question SET IsDeleted = 1, ModifiedBy = @UserId, ModifiedOn = GETDATE() WHERE QuestionId = @QuestionId
+    UPDATE dbo.Question SET IsDeleted = 1, ModifiedBy = @UserId, ModifiedIp = @IP, ModifiedOn = GETDATE() WHERE QuestionId = @QuestionId
 
     SET @output = (SELECT 1 AS ID, 200 AS statuscode, 'OK' AS response FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER);
     COMMIT RETURN;
@@ -1081,9 +1191,9 @@ BEGIN
     IF @TemplateName IS NOT NULL AND LTRIM(RTRIM(@TemplateName)) <> ''
     BEGIN
         DELETE FROM @NewId
-        INSERT INTO dbo.BlueprintTemplate (Name, FilterJson, CreatedBy, FranchiseId)
+        INSERT INTO dbo.BlueprintTemplate (Name, FilterJson, CreatedBy, CreatedIp, FranchiseId)
         OUTPUT INSERTED.TemplateId INTO @NewId
-        VALUES (LTRIM(RTRIM(@TemplateName)), @TemplateFilterJson, @UserId, @FranchiseId)
+        VALUES (LTRIM(RTRIM(@TemplateName)), @TemplateFilterJson, @UserId, @IP, @FranchiseId)
         SELECT @TemplateIdStr = CAST(Id AS VARCHAR(20)) FROM @NewId
     END
 
@@ -1091,19 +1201,19 @@ BEGIN
     SELECT @BodyId = BodyId FROM ExamBody WHERE Name = N'Templates' AND IsDeleted = 0
     IF @BodyId IS NULL
     BEGIN
-        INSERT INTO dbo.ExamBody (Name, CreatedBy, FranchiseId) VALUES (N'Templates', @UserId, @FranchiseId)
+        INSERT INTO dbo.ExamBody (Name, CreatedBy, CreatedIp, FranchiseId) VALUES (N'Templates', @UserId, @IP, @FranchiseId)
         SET @BodyId = SCOPE_IDENTITY()
     END
     SELECT @ProgramId = ProgramId FROM ExamProgram WHERE BodyId = @BodyId AND Code = 'GENERAL' AND IsDeleted = 0
     IF @ProgramId IS NULL
     BEGIN
-        INSERT INTO dbo.ExamProgram (BodyId, Code, Name, CreatedBy, FranchiseId) VALUES (@BodyId, 'GENERAL', N'General', @UserId, @FranchiseId)
+        INSERT INTO dbo.ExamProgram (BodyId, Code, Name, CreatedBy, CreatedIp, FranchiseId) VALUES (@BodyId, 'GENERAL', N'General', @UserId, @IP, @FranchiseId)
         SET @ProgramId = SCOPE_IDENTITY()
     END
     SELECT @StageId = StageId FROM ExamStage WHERE ProgramId = @ProgramId AND Code = 'GENERAL' AND IsDeleted = 0
     IF @StageId IS NULL
     BEGIN
-        INSERT INTO dbo.ExamStage (ProgramId, Code, Name, SeqNo, CreatedBy, FranchiseId) VALUES (@ProgramId, 'GENERAL', N'General', 1, @UserId, @FranchiseId)
+        INSERT INTO dbo.ExamStage (ProgramId, Code, Name, SeqNo, CreatedBy, CreatedIp, FranchiseId) VALUES (@ProgramId, 'GENERAL', N'General', 1, @UserId, @IP, @FranchiseId)
         SET @StageId = SCOPE_IDENTITY()
     END
 
@@ -1114,19 +1224,19 @@ BEGIN
     IF @TestKindId IS NULL
     BEGIN
         SELECT @TestKindId = ISNULL(MAX(TestKindId), 0) + 1 FROM TestKind
-        INSERT INTO dbo.TestKind (TestKindId, Code, Name, CreatedBy, FranchiseId) VALUES (@TestKindId, @TestKindCode, @TestKindName, @UserId, @FranchiseId)
+        INSERT INTO dbo.TestKind (TestKindId, Code, Name, CreatedBy, CreatedIp, FranchiseId) VALUES (@TestKindId, @TestKindCode, @TestKindName, @UserId, @IP, @FranchiseId)
     END
 
     SELECT @PublishedStatus = TRY_CAST(ServiceValue AS INT) FROM _InternalService WHERE Category = 'EXAM_STATUS' AND ServiceLabel = 'PUBLISHED' AND IsActive = 1
 
-    -- Exam-wide flags ({sequentialSections, allowResume}) ride along inside ExamFilterJson.
+    -- Exam-wide flags ({sequentialSections, allowResume, randomizeQuestions}) ride along inside ExamFilterJson.
     SET @SettingsJson = JSON_QUERY(@ExamFilterJson, '$.settings')
     SET @MsName = JSON_VALUE(@ExamFilterJson, '$.markingScheme.Name')
     SET @MsRulesJson = JSON_QUERY(@ExamFilterJson, '$.markingScheme.RulesJson')
     DELETE FROM @NewId
-    INSERT INTO dbo.MarkingScheme (Name, RulesJson, CreatedBy, FranchiseId)
+    INSERT INTO dbo.MarkingScheme (Name, RulesJson, CreatedBy, CreatedIp, FranchiseId)
     OUTPUT INSERTED.SchemeId INTO @NewId
-    VALUES (@MsName, @MsRulesJson, @UserId, @FranchiseId)
+    VALUES (@MsName, @MsRulesJson, @UserId, @IP, @FranchiseId)
     SELECT @SchemeId = Id FROM @NewId
 
     SET @PaperName = JSON_VALUE(@ExamFilterJson, '$.examPaper.Name')
@@ -1136,9 +1246,9 @@ BEGIN
     SET @PaperDefaultLocale = ISNULL(JSON_VALUE(@ExamFilterJson, '$.examPaper.DefaultLocale'), 'en')
 
     DELETE FROM @NewId
-    INSERT INTO dbo.ExamPaper (StageId, Code, Name, TotalMarks, DurationMin, IsQualifying, DefaultSchemeId, DefaultLocale, CreatedBy, FranchiseId)
+    INSERT INTO dbo.ExamPaper (StageId, Code, Name, TotalMarks, DurationMin, IsQualifying, DefaultSchemeId, DefaultLocale, CreatedBy, CreatedIp, FranchiseId)
     OUTPUT INSERTED.PaperId INTO @NewId
-    VALUES (@StageId, @PaperCode, @PaperName, @PaperTotalMarks, @PaperDurationMin, @PaperIsQualifying, @SchemeId, @PaperDefaultLocale, @UserId, @FranchiseId)
+    VALUES (@StageId, @PaperCode, @PaperName, @PaperTotalMarks, @PaperDurationMin, @PaperIsQualifying, @SchemeId, @PaperDefaultLocale, @UserId, @IP, @FranchiseId)
     SELECT @PaperId = Id FROM @NewId
 
     DELETE FROM @SectionInput
@@ -1150,8 +1260,8 @@ BEGIN
     WHILE @RowNo IS NOT NULL AND @RowNo <= @MaxRowNo
     BEGIN
         SELECT @SecName = Name, @SecSeqNo = SeqNo, @SecRulesJson = RulesJson FROM @SectionInput WHERE RowNo = @RowNo
-        INSERT INTO dbo.PaperSection (PaperId, Name, SeqNo, RulesJson, CreatedBy, FranchiseId)
-        VALUES (@PaperId, @SecName, @SecSeqNo, @SecRulesJson, @UserId, @FranchiseId)
+        INSERT INTO dbo.PaperSection (PaperId, Name, SeqNo, RulesJson, CreatedBy, CreatedIp, FranchiseId)
+        VALUES (@PaperId, @SecName, @SecSeqNo, @SecRulesJson, @UserId, @IP, @FranchiseId)
         SET @RowNo += 1
     END
 
@@ -1180,12 +1290,12 @@ BEGIN
     -- IsPersonalized is always 0 here — the only other MockTest-creation
     -- path is the student portal's Mode 7 (personalized mock generation).
     DELETE FROM @NewId
-    INSERT INTO dbo.MockTest (Code, PaperId, TestKindId, Name, Instructions, IsPersonalized, Status, PublishedOn, SelectionPolicyJson, SettingsJson, CreatedBy, FranchiseId)
+    INSERT INTO dbo.MockTest (Code, PaperId, TestKindId, Name, Instructions, IsPersonalized, Status, PublishedOn, SelectionPolicyJson, SettingsJson, CreatedBy, CreatedIp, FranchiseId)
     OUTPUT INSERTED.MockTestId INTO @NewId
     VALUES (
         @MtCode, @PaperId, @TestKindId, @PaperName, NULLIF(LTRIM(RTRIM(@Instructions)), ''), 0, @InitialStatus,
         CASE WHEN @InitialStatus = @PublishedStatus THEN GETDATE() ELSE NULL END,
-        @SelectionPolicyJson, @SettingsJson, @UserId, @FranchiseId
+        @SelectionPolicyJson, @SettingsJson, @UserId, @IP, @FranchiseId
     )
     SELECT @MockTestId = Id FROM @NewId
 
@@ -1265,19 +1375,20 @@ BEGIN
     END
 
     SELECT @PriorTemplateId = JSON_VALUE(SelectionPolicyJson, '$.templateId'), @SettingsJson = SettingsJson FROM MockTest WHERE MockTestId = @MockTestId
-    -- "Settings": {sequentialSections, allowResume} — merged into whatever SettingsJson already holds
-    -- so unrelated keys (calculator, autoSubmit, ...) survive an edit.
-    SET @SettingsJson = JSON_MODIFY(JSON_MODIFY(ISNULL(@SettingsJson, '{}'),
+    -- "Settings": {sequentialSections, allowResume, randomizeQuestions} — merged into whatever
+    -- SettingsJson already holds so unrelated keys (calculator, autoSubmit, ...) survive an edit.
+    SET @SettingsJson = JSON_MODIFY(JSON_MODIFY(JSON_MODIFY(ISNULL(@SettingsJson, '{}'),
         '$.sequentialSections', TRY_CAST(JSON_VALUE(@SettingsInJson, '$.sequentialSections') AS BIT)),
-        '$.allowResume', TRY_CAST(JSON_VALUE(@SettingsInJson, '$.allowResume') AS BIT))
+        '$.allowResume', TRY_CAST(JSON_VALUE(@SettingsInJson, '$.allowResume') AS BIT)),
+        '$.randomizeQuestions', TRY_CAST(JSON_VALUE(@SettingsInJson, '$.randomizeQuestions') AS BIT))
 
     SET @TemplateIdStr = NULL
     IF @TemplateName IS NOT NULL AND LTRIM(RTRIM(@TemplateName)) <> ''
     BEGIN
         DELETE FROM @NewId
-        INSERT INTO dbo.BlueprintTemplate (Name, FilterJson, CreatedBy, FranchiseId)
+        INSERT INTO dbo.BlueprintTemplate (Name, FilterJson, CreatedBy, CreatedIp, FranchiseId)
         OUTPUT INSERTED.TemplateId INTO @NewId
-        VALUES (LTRIM(RTRIM(@TemplateName)), @TemplateFilterJson, @UserId, @FranchiseId)
+        VALUES (LTRIM(RTRIM(@TemplateName)), @TemplateFilterJson, @UserId, @IP, @FranchiseId)
         SELECT @TemplateIdStr = CAST(Id AS VARCHAR(20)) FROM @NewId
     END
 
@@ -1285,15 +1396,15 @@ BEGIN
     IF @TestKindId IS NULL
     BEGIN
         SELECT @TestKindId = ISNULL(MAX(TestKindId), 0) + 1 FROM TestKind
-        INSERT INTO dbo.TestKind (TestKindId, Code, Name, CreatedBy, FranchiseId) VALUES (@TestKindId, @TestKindCode, @TestKindName, @UserId, @FranchiseId)
+        INSERT INTO dbo.TestKind (TestKindId, Code, Name, CreatedBy, CreatedIp, FranchiseId) VALUES (@TestKindId, @TestKindCode, @TestKindName, @UserId, @IP, @FranchiseId)
     END
 
     UPDATE dbo.MarkingScheme
-    SET Name = @MarkingSchemeName, RulesJson = ISNULL(@MsRulesJson, RulesJson), ModifiedBy = @UserId, ModifiedOn = GETDATE()
+    SET Name = @MarkingSchemeName, RulesJson = ISNULL(@MsRulesJson, RulesJson), ModifiedBy = @UserId, ModifiedIp = @IP, ModifiedOn = GETDATE()
     WHERE SchemeId = (SELECT DefaultSchemeId FROM ExamPaper WHERE PaperId = @PaperId)
 
     UPDATE dbo.ExamPaper
-    SET Name = @ExamName, TotalMarks = @TotalMarks, DurationMin = @DurationMin, ModifiedBy = @UserId, ModifiedOn = GETDATE()
+    SET Name = @ExamName, TotalMarks = @TotalMarks, DurationMin = @DurationMin, ModifiedBy = @UserId, ModifiedIp = @IP, ModifiedOn = GETDATE()
     WHERE PaperId = @PaperId
 
     DELETE FROM @CurSections
@@ -1321,7 +1432,7 @@ BEGIN
         IF @MatchesExisting = 1
         BEGIN
             UPDATE dbo.PaperSection
-            SET Name = @SecName, SeqNo = @SecSeqNo, RulesJson = @SecRulesJson, ModifiedBy = @UserId, ModifiedOn = GETDATE()
+            SET Name = @SecName, SeqNo = @SecSeqNo, RulesJson = @SecRulesJson, ModifiedBy = @UserId, ModifiedIp = @IP, ModifiedOn = GETDATE()
             WHERE SectionId = @SecSectionId
 
             UPDATE @CurSections SET Kept = 1 WHERE SectionId = @SecSectionId
@@ -1329,7 +1440,21 @@ BEGIN
             IF @OverCapacityResolution = 'trim'
             BEGIN
                 SET @NewPool = TRY_CAST(JSON_VALUE(@SecRulesJson, '$.questions') AS INT)
-                UPDATE TestQuestion SET IsDeleted = 1, ModifiedBy = @UserId, ModifiedOn = GETDATE()
+                DELETE FROM @TagDelta
+                INSERT INTO @TagDelta (DimensionId, TagId, Cnt)
+                SELECT t.DimensionId, qt.TagId, COUNT(*)
+                FROM TestQuestion tq
+                JOIN QuestionTag qt ON qt.QuestionId = tq.QuestionId AND qt.IsDeleted = 0 AND qt.IsActive = 1
+                JOIN Tag t ON t.TagId = qt.TagId AND t.IsDeleted = 0
+                WHERE tq.MockTestId = @MockTestId AND tq.SectionId = @SecSectionId AND tq.IsDeleted = 0
+                  AND tq.SeqNo IN (
+                    SELECT SeqNo FROM (
+                        SELECT SeqNo, ROW_NUMBER() OVER (ORDER BY SeqNo ASC) AS rn
+                        FROM TestQuestion WHERE MockTestId = @MockTestId AND SectionId = @SecSectionId AND IsDeleted = 0
+                    ) x WHERE x.rn > @NewPool
+                  )
+                GROUP BY t.DimensionId, qt.TagId
+                UPDATE TestQuestion SET IsDeleted = 1, ModifiedBy = @UserId, ModifiedIp = @IP, ModifiedOn = GETDATE()
                 WHERE MockTestId = @MockTestId AND SectionId = @SecSectionId AND IsDeleted = 0
                   AND SeqNo IN (
                     SELECT SeqNo FROM (
@@ -1337,12 +1462,18 @@ BEGIN
                         FROM TestQuestion WHERE MockTestId = @MockTestId AND SectionId = @SecSectionId AND IsDeleted = 0
                     ) x WHERE x.rn > @NewPool
                   )
+                -- MockTestTag: -1 per removed question per tag; the row is hard-deleted when its count reaches 0.
+                DELETE mtt FROM dbo.MockTestTag mtt JOIN @TagDelta d ON d.DimensionId = mtt.DimensionId AND d.TagId = mtt.TagId
+                WHERE mtt.FranchiseId = @FranchiseId AND mtt.MockTestId = @MockTestId AND mtt.QuestionCount <= d.Cnt
+                UPDATE mtt SET QuestionCount = mtt.QuestionCount - d.Cnt, ModifiedBy = @UserId, ModifiedIp = @IP, ModifiedOn = GETDATE()
+                FROM dbo.MockTestTag mtt JOIN @TagDelta d ON d.DimensionId = mtt.DimensionId AND d.TagId = mtt.TagId
+                WHERE mtt.FranchiseId = @FranchiseId AND mtt.MockTestId = @MockTestId AND mtt.QuestionCount > d.Cnt
             END
         END
         ELSE
         BEGIN
-            INSERT INTO dbo.PaperSection (PaperId, Name, SeqNo, RulesJson, CreatedBy, FranchiseId)
-            VALUES (@PaperId, @SecName, @SecSeqNo, @SecRulesJson, @UserId, @FranchiseId)
+            INSERT INTO dbo.PaperSection (PaperId, Name, SeqNo, RulesJson, CreatedBy, CreatedIp, FranchiseId)
+            VALUES (@PaperId, @SecName, @SecSeqNo, @SecRulesJson, @UserId, @IP, @FranchiseId)
         END
 
         SET @RowNo += 1
@@ -1351,7 +1482,7 @@ BEGIN
     -- Sections the admin removed in this edit — soft-delete. Their negative
     -- placeholder SeqNo is left as-is; it can never collide with a future
     -- positive assignment.
-    UPDATE PaperSection SET IsDeleted = 1, ModifiedBy = @UserId, ModifiedOn = GETDATE()
+    UPDATE PaperSection SET IsDeleted = 1, ModifiedBy = @UserId, ModifiedIp = @IP, ModifiedOn = GETDATE()
     WHERE SectionId IN (SELECT SectionId FROM @CurSections WHERE Kept = 0)
 
     SET @SelectionPolicyJson = (
@@ -1369,7 +1500,7 @@ BEGIN
 
     UPDATE dbo.MockTest
     SET Name = @ExamName, TestKindId = @TestKindId, Instructions = NULLIF(LTRIM(RTRIM(@Instructions)), ''),
-        SelectionPolicyJson = @SelectionPolicyJson, SettingsJson = @SettingsJson, ModifiedBy = @UserId, ModifiedOn = GETDATE()
+        SelectionPolicyJson = @SelectionPolicyJson, SettingsJson = @SettingsJson, ModifiedBy = @UserId, ModifiedIp = @IP, ModifiedOn = GETDATE()
     WHERE MockTestId = @MockTestId
 
     SET @output = (
@@ -1418,9 +1549,9 @@ BEGIN
     END
 
     IF @ToStatus2 = @PublishedStatus
-        UPDATE dbo.MockTest SET Status = @ToStatus2, PublishedOn = GETDATE(), ModifiedBy = @UserId, ModifiedOn = GETDATE() WHERE MockTestId = @MockTestId
+        UPDATE dbo.MockTest SET Status = @ToStatus2, PublishedOn = GETDATE(), ModifiedBy = @UserId, ModifiedIp = @IP, ModifiedOn = GETDATE() WHERE MockTestId = @MockTestId
     ELSE
-        UPDATE dbo.MockTest SET Status = @ToStatus2, ModifiedBy = @UserId, ModifiedOn = GETDATE() WHERE MockTestId = @MockTestId
+        UPDATE dbo.MockTest SET Status = @ToStatus2, ModifiedBy = @UserId, ModifiedIp = @IP, ModifiedOn = GETDATE() WHERE MockTestId = @MockTestId
 
     SET @output = (SELECT 1 AS ID, 200 AS statuscode, 'OK' AS response FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER);
     COMMIT RETURN;
@@ -1437,7 +1568,7 @@ BEGIN
         COMMIT RETURN;
     END
 
-    UPDATE dbo.MockTest SET IsDeleted = 1, ModifiedBy = @UserId, ModifiedOn = GETDATE() WHERE MockTestId = @MockTestId
+    UPDATE dbo.MockTest SET IsDeleted = 1, ModifiedBy = @UserId, ModifiedIp = @IP, ModifiedOn = GETDATE() WHERE MockTestId = @MockTestId
 
     SET @output = (SELECT 1 AS ID, 200 AS statuscode, 'OK' AS response FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER);
     COMMIT RETURN;
@@ -1484,9 +1615,9 @@ BEGIN
     SELECT @TemplateName = Name, @TemplateFilterJson = FilterJson FROM OPENJSON(@json) WITH (Name NVARCHAR(200), FilterJson NVARCHAR(MAX))
 
     DELETE FROM @NewId
-    INSERT INTO dbo.BlueprintTemplate (Name, FilterJson, CreatedBy, FranchiseId)
+    INSERT INTO dbo.BlueprintTemplate (Name, FilterJson, CreatedBy, CreatedIp, FranchiseId)
     OUTPUT INSERTED.TemplateId INTO @NewId
-    VALUES (LTRIM(RTRIM(@TemplateName)), @TemplateFilterJson, @UserId, @FranchiseId)
+    VALUES (LTRIM(RTRIM(@TemplateName)), @TemplateFilterJson, @UserId, @IP, @FranchiseId)
     SELECT @TemplateIdStr = CAST(Id AS VARCHAR(20)) FROM @NewId
 
     SET @output = (
@@ -1512,7 +1643,7 @@ BEGIN
     END
 
     UPDATE dbo.BlueprintTemplate
-    SET Name = LTRIM(RTRIM(@TemplateName)), FilterJson = @TemplateFilterJson, ModifiedBy = @UserId, ModifiedOn = GETDATE()
+    SET Name = LTRIM(RTRIM(@TemplateName)), FilterJson = @TemplateFilterJson, ModifiedBy = @UserId, ModifiedIp = @IP, ModifiedOn = GETDATE()
     WHERE TemplateId = @TemplateId
 
     SET @output = (SELECT 1 AS ID, 200 AS statuscode, 'OK' AS response FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER);
@@ -1531,7 +1662,7 @@ BEGIN
         COMMIT RETURN;
     END
 
-    UPDATE dbo.BlueprintTemplate SET IsDeleted = 1, ModifiedBy = @UserId, ModifiedOn = GETDATE() WHERE TemplateId = @TemplateId
+    UPDATE dbo.BlueprintTemplate SET IsDeleted = 1, ModifiedBy = @UserId, ModifiedIp = @IP, ModifiedOn = GETDATE() WHERE TemplateId = @TemplateId
 
     SET @output = (SELECT 1 AS ID, 200 AS statuscode, 'OK' AS response FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER);
     COMMIT RETURN;
@@ -1577,6 +1708,18 @@ BEGIN
     SET @PaperTotalMarks = TRY_CAST(JSON_VALUE(@MsRulesJson, '$.marks') AS DECIMAL(5,2))
     SET @SecNegative = TRY_CAST(JSON_VALUE(@MsRulesJson, '$.negative') AS DECIMAL(5,2))
 
+    -- TestQuestion.EffectiveMarks / EffectiveNegative are NOT NULL and are copied from
+    -- the section's rules. A section with no negative value simply has no negative
+    -- marking, so that defaults to 0. Marks are never guessed: a section with no marks
+    -- gets a clear message instead of silently scoring 0 (and instead of the raw
+    -- "Cannot insert the value NULL into column ..." error the INSERT used to throw).
+    SET @SecNegative = ISNULL(@SecNegative, 0)
+    IF @PaperTotalMarks IS NULL
+    BEGIN
+        SET @output = (SELECT 1 AS ID, 409 AS statuscode, 'This section has no marks per question set. Edit the exam''s section settings and enter the marks, then add the questions again.' AS response FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER);
+        COMMIT RETURN;
+    END
+
     DELETE FROM @QuestionIdsInput
     INSERT INTO @QuestionIdsInput (QuestionId)
     SELECT DISTINCT TRY_CAST(value AS BIGINT) FROM STRING_SPLIT(ISNULL(@QuestionIdsCsv, ''), ',') WHERE TRY_CAST(value AS BIGINT) IS NOT NULL
@@ -1620,9 +1763,31 @@ BEGIN
     -- caller's selection order (STRING_SPLIT doesn't guarantee input order
     -- across all supported SQL Server versions) — a cosmetic ordering
     -- difference from the old TS version only, not a correctness one.
-    INSERT INTO dbo.TestQuestion (MockTestId, SectionId, SeqNo, QuestionId, VersionId, EffectiveMarks, EffectiveNegative, CreatedBy, FranchiseId)
-    SELECT @MockTestId, @SecSectionId, @RowNo + ROW_NUMBER() OVER (ORDER BY qi.QuestionId), qi.QuestionId, q.CurrentVersionId, @PaperTotalMarks, @SecNegative, @UserId, @FranchiseId
+    -- GroupVersionId = the case study's current paragraph version (NULL for a standalone question).
+    INSERT INTO dbo.TestQuestion (MockTestId, SectionId, SeqNo, QuestionId, VersionId, GroupVersionId, EffectiveMarks, EffectiveNegative, CreatedBy, CreatedIp, FranchiseId)
+    SELECT @MockTestId, @SecSectionId, @RowNo + ROW_NUMBER() OVER (ORDER BY qi.QuestionId), qi.QuestionId, q.CurrentVersionId, qg.CurrentVersionId, @PaperTotalMarks, @SecNegative, @UserId, @IP, @FranchiseId
     FROM @QuestionIdsInput qi JOIN Question q ON q.QuestionId = qi.QuestionId
+    LEFT JOIN QuestionGroup qg ON qg.GroupId = q.GroupId
+
+    -- MockTestTag (exam <-> tag direct relation): +1 per picked question per tag. Existing row
+    -- gets QuestionCount + n, a new (exam, dimension, tag) gets a row with the count.
+    DELETE FROM @TagDelta
+    INSERT INTO @TagDelta (DimensionId, TagId, Cnt)
+    SELECT t.DimensionId, qt.TagId, COUNT(*)
+    FROM @QuestionIdsInput qi
+    JOIN QuestionTag qt ON qt.QuestionId = qi.QuestionId AND qt.IsDeleted = 0 AND qt.IsActive = 1
+    JOIN Tag t ON t.TagId = qt.TagId AND t.IsDeleted = 0
+    GROUP BY t.DimensionId, qt.TagId
+
+    UPDATE mtt SET QuestionCount = mtt.QuestionCount + d.Cnt, ModifiedBy = @UserId, ModifiedIp = @IP, ModifiedOn = GETDATE()
+    FROM dbo.MockTestTag mtt JOIN @TagDelta d ON d.DimensionId = mtt.DimensionId AND d.TagId = mtt.TagId
+    WHERE mtt.FranchiseId = @FranchiseId AND mtt.MockTestId = @MockTestId
+
+    INSERT INTO dbo.MockTestTag (FranchiseId, MockTestId, DimensionId, TagId, QuestionCount, CreatedBy, CreatedIp)
+    SELECT @FranchiseId, @MockTestId, d.DimensionId, d.TagId, d.Cnt, @UserId, @IP
+    FROM @TagDelta d
+    WHERE NOT EXISTS (SELECT 1 FROM dbo.MockTestTag mtt WHERE mtt.FranchiseId = @FranchiseId AND mtt.MockTestId = @MockTestId
+                      AND mtt.DimensionId = d.DimensionId AND mtt.TagId = d.TagId)
 
     SET @output = (
         SELECT 1 AS ID, 200 AS statuscode,
@@ -1668,9 +1833,26 @@ BEGIN
         COMMIT RETURN;
     END
 
-    UPDATE dbo.TestQuestion SET IsDeleted = 1, ModifiedBy = @UserId, ModifiedOn = GETDATE()
+    DELETE FROM @TagDelta
+    INSERT INTO @TagDelta (DimensionId, TagId, Cnt)
+    SELECT t.DimensionId, qt.TagId, COUNT(*)
+    FROM TestQuestion tq
+    JOIN QuestionTag qt ON qt.QuestionId = tq.QuestionId AND qt.IsDeleted = 0 AND qt.IsActive = 1
+    JOIN Tag t ON t.TagId = qt.TagId AND t.IsDeleted = 0
+    WHERE tq.MockTestId = @MockTestId AND tq.SectionId = @SecSectionId AND tq.IsDeleted = 0
+      AND tq.QuestionId IN (SELECT QuestionId FROM @QuestionIdsInput)
+    GROUP BY t.DimensionId, qt.TagId
+
+    UPDATE dbo.TestQuestion SET IsDeleted = 1, ModifiedBy = @UserId, ModifiedIp = @IP, ModifiedOn = GETDATE()
     WHERE MockTestId = @MockTestId AND SectionId = @SecSectionId AND IsDeleted = 0
       AND QuestionId IN (SELECT QuestionId FROM @QuestionIdsInput)
+
+    -- MockTestTag: -1 per removed question per tag; the row is hard-deleted when its count reaches 0.
+    DELETE mtt FROM dbo.MockTestTag mtt JOIN @TagDelta d ON d.DimensionId = mtt.DimensionId AND d.TagId = mtt.TagId
+    WHERE mtt.FranchiseId = @FranchiseId AND mtt.MockTestId = @MockTestId AND mtt.QuestionCount <= d.Cnt
+    UPDATE mtt SET QuestionCount = mtt.QuestionCount - d.Cnt, ModifiedBy = @UserId, ModifiedIp = @IP, ModifiedOn = GETDATE()
+    FROM dbo.MockTestTag mtt JOIN @TagDelta d ON d.DimensionId = mtt.DimensionId AND d.TagId = mtt.TagId
+    WHERE mtt.FranchiseId = @FranchiseId AND mtt.MockTestId = @MockTestId AND mtt.QuestionCount > d.Cnt
 
     SET @output = (
         SELECT 1 AS ID, 200 AS statuscode,
@@ -1824,6 +2006,542 @@ BEGIN
     COMMIT RETURN;
 END
 
+-- =====================================================================
+-- Case studies (shared paragraph + several questions). Storage already exists:
+-- QuestionGroup (+ Code/Title/SearchText from add-questiongroup-case-study-columns.sql)
+-- and QuestionGroupVersion.ContextJson (versioned like QuestionVersion);
+-- Question.GroupId/GroupSeq link a question to its paragraph (set by Modes 13/14),
+-- TestQuestion.GroupVersionId snapshots the paragraph version (Mode 30).
+-- ContextJson = {"title": "...", "text": "...", "media": {kind,id,url}}, built in
+-- TS (app/lib/questions/caseStudy.ts) — same split as Presentation/AnswerJson.
+-- =====================================================================
+
+-- Mode 35: Case-study list/search for the "choose existing" picker
+-- (listCaseStudies). @json: {"Q": "<search text>", "Page": <int>,
+-- "PageSize": <int>}. Q is LIKE-matched against QuestionGroup.SearchText and
+-- Code. The wildcard characters in Q are neutralised with [ ] brackets and the LIKE
+-- has no ESCAPE clause (an ESCAPE '[' clause, as Modes 7/8 use, would break that). Returns {"Total", "Items": [{GroupId,
+-- Code, Title, Preview (first 300 chars), QuestionCount, CreatedOn}]}.
+if(@Mode = 35)
+BEGIN
+    SELECT @Page = Page, @PageSize = PageSize, @Q = Q
+    FROM OPENJSON(@json) WITH (Page INT, PageSize INT, Q NVARCHAR(4000))
+
+    IF @Page IS NULL OR @Page < 1 SET @Page = 1
+    IF @PageSize IS NULL OR @PageSize < 1 SET @PageSize = 20
+    SET @QPattern = CASE WHEN @Q IS NOT NULL AND LTRIM(RTRIM(@Q)) <> ''
+        THEN '%' + REPLACE(REPLACE(REPLACE(@Q, '[', '[[]'), '%', '[%]'), '_', '[_]') + '%' ELSE NULL END
+
+    SELECT @Total = COUNT(*)
+    FROM QuestionGroup g
+    WHERE g.IsDeleted = 0 AND g.FranchiseId = @FranchiseId
+      AND (@QPattern IS NULL OR g.SearchText LIKE @QPattern OR g.Code LIKE @QPattern)
+
+    SET @ItemsJson = (
+        SELECT
+            CAST(g.GroupId AS VARCHAR(20)) AS GroupId, g.Code, g.Title, LEFT(g.SearchText, 300) AS Preview,
+            (SELECT COUNT(*) FROM Question q WHERE q.GroupId = g.GroupId AND q.IsDeleted = 0) AS QuestionCount,
+            g.CreatedOn
+        FROM QuestionGroup g
+        WHERE g.IsDeleted = 0 AND g.FranchiseId = @FranchiseId
+          AND (@QPattern IS NULL OR g.SearchText LIKE @QPattern OR g.Code LIKE @QPattern)
+        ORDER BY g.CreatedOn DESC, g.GroupId DESC
+        OFFSET (@Page - 1) * @PageSize ROWS FETCH NEXT @PageSize ROWS ONLY
+        FOR JSON PATH, INCLUDE_NULL_VALUES
+    )
+    IF @ItemsJson IS NULL SET @ItemsJson = '[]'
+
+    SET @output = N'{"ID":1,"statuscode":200,"response":{"Total":' + CAST(@Total AS NVARCHAR(20)) + N',"Items":' + @ItemsJson + N'}}'
+    COMMIT RETURN;
+END
+
+-- Mode 36: One case study with its current paragraph and its questions
+-- (getCaseStudy). @json: {"GroupId": <bigint>}. Returns {GroupId, Code, Title,
+-- VersionNo, Context: <ContextJson as an object>, Questions: [{Id, Code,
+-- GroupSeq, Status, StemPreview}]} or a null response when not found.
+if(@Mode = 36)
+BEGIN
+    SELECT @GroupId = GroupId FROM OPENJSON(@json) WITH (GroupId BIGINT)
+
+    SET @output = (
+        SELECT 1 AS ID, 200 AS statuscode,
+        (
+            SELECT
+                CAST(g.GroupId AS VARCHAR(20)) AS GroupId, g.Code, g.Title, gv.VersionNo,
+                JSON_QUERY(gv.ContextJson) AS Context,
+                JSON_QUERY((
+                    SELECT
+                        CAST(q.QuestionId AS VARCHAR(20)) AS Id, q.Code, q.GroupSeq, q.Status,
+                        (SELECT TOP 1 LEFT(qs.SearchText, 120) FROM QuestionSearch qs WHERE qs.QuestionId = q.QuestionId AND qs.Locale = 'en') AS StemPreview
+                    FROM Question q
+                    WHERE q.GroupId = g.GroupId AND q.IsDeleted = 0
+                    ORDER BY q.GroupSeq, q.QuestionId
+                    FOR JSON PATH, INCLUDE_NULL_VALUES
+                )) AS Questions
+            FROM QuestionGroup g
+            LEFT JOIN QuestionGroupVersion gv ON gv.VersionId = g.CurrentVersionId
+            WHERE g.GroupId = @GroupId AND g.IsDeleted = 0 AND g.FranchiseId = @FranchiseId
+            FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER
+        ) AS response
+        FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER
+    );
+    COMMIT RETURN;
+END
+
+-- Mode 37: Create a case study (createCaseStudy). @json: {"Title": "..." | null,
+-- "ContextJson": "<json text>", "SearchText": "<flattened title + paragraph>"}.
+-- Generates Code (CS-yyyyMMdd-XXXXXXXX, bounded retry on the unique index),
+-- inserts the QuestionGroup + its VersionNo 1 and repoints CurrentVersionId.
+-- Returns {GroupId, Code}. Content validation (non-empty text etc.) is in TS.
+if(@Mode = 37)
+BEGIN
+    SELECT @GroupTitle = Title, @GroupContextJson = ContextJson, @GroupSearchText = SearchText
+    FROM OPENJSON(@json) WITH (Title NVARCHAR(300), ContextJson NVARCHAR(MAX), SearchText NVARCHAR(4000))
+
+    IF @GroupContextJson IS NULL OR ISJSON(@GroupContextJson) = 0
+    BEGIN
+        SET @output = (SELECT 1 AS ID, 400 AS statuscode, 'Case study content is missing or invalid.' AS response FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER);
+        COMMIT RETURN;
+    END
+
+    SET @CodeAttempts = 0
+    WHILE 1 = 1
+    BEGIN
+        SET @GroupCode = 'CS-' + FORMAT(GETDATE(), 'yyyyMMdd') + '-' + UPPER(CONVERT(VARCHAR(8), CRYPT_GEN_RANDOM(4), 2))
+        IF NOT EXISTS (SELECT 1 FROM QuestionGroup WHERE Code = @GroupCode) BREAK
+        SET @CodeAttempts += 1
+        IF @CodeAttempts > 5 BREAK
+    END
+    IF EXISTS (SELECT 1 FROM QuestionGroup WHERE Code = @GroupCode)
+    BEGIN
+        SET @output = (SELECT 1 AS ID, 409 AS statuscode, 'Could not generate a unique case study code. Please try again.' AS response FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER);
+        COMMIT RETURN;
+    END
+
+    DELETE FROM @NewId
+    INSERT INTO dbo.QuestionGroup (Code, Title, SearchText, CreatedBy, CreatedIp, FranchiseId)
+    OUTPUT INSERTED.GroupId INTO @NewId
+    VALUES (@GroupCode, NULLIF(LTRIM(RTRIM(@GroupTitle)), ''), @GroupSearchText, @UserId, @IP, @FranchiseId)
+    SELECT @GroupId = Id FROM @NewId
+
+    DELETE FROM @NewId
+    INSERT INTO dbo.QuestionGroupVersion (GroupId, VersionNo, ContextJson, ChangeNote, CreatedBy, CreatedIp, FranchiseId)
+    OUTPUT INSERTED.VersionId INTO @NewId
+    VALUES (@GroupId, 1, @GroupContextJson, 'Initial version', @UserId, @IP, @FranchiseId)
+    SELECT @GroupVersionId = Id FROM @NewId
+
+    UPDATE dbo.QuestionGroup SET CurrentVersionId = @GroupVersionId, ModifiedBy = @UserId, ModifiedIp = @IP, ModifiedOn = GETDATE() WHERE GroupId = @GroupId
+
+    SET @output = (
+        SELECT 1 AS ID, 200 AS statuscode,
+        (SELECT CAST(@GroupId AS VARCHAR(20)) AS GroupId, @GroupCode AS Code FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER) AS response
+        FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER
+    );
+    COMMIT RETURN;
+END
+
+-- Mode 38: Edit a case study (updateCaseStudy) — always a NEW
+-- QuestionGroupVersion + repoint CurrentVersionId, same rule as Mode 14, so an
+-- exam that already snapshotted TestQuestion.GroupVersionId keeps the old
+-- paragraph. @json: {"GroupId": <bigint>, "Title": "..." | null, "ContextJson":
+-- "<json text>", "SearchText": "...", "ChangeNote": "..." | null}.
+if(@Mode = 38)
+BEGIN
+    SELECT @GroupId = GroupId, @GroupTitle = Title, @GroupContextJson = ContextJson, @GroupSearchText = SearchText, @ChangeNote = ChangeNote
+    FROM OPENJSON(@json) WITH (GroupId BIGINT, Title NVARCHAR(300), ContextJson NVARCHAR(MAX), SearchText NVARCHAR(4000), ChangeNote NVARCHAR(400))
+
+    IF NOT EXISTS (SELECT 1 FROM QuestionGroup WHERE GroupId = @GroupId AND IsDeleted = 0 AND FranchiseId = @FranchiseId)
+    BEGIN
+        SET @output = (SELECT 1 AS ID, 404 AS statuscode, 'Case study not found.' AS response FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER);
+        COMMIT RETURN;
+    END
+    IF @GroupContextJson IS NULL OR ISJSON(@GroupContextJson) = 0
+    BEGIN
+        SET @output = (SELECT 1 AS ID, 400 AS statuscode, 'Case study content is missing or invalid.' AS response FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER);
+        COMMIT RETURN;
+    END
+
+    SELECT @NextVersionNo = ISNULL(MAX(VersionNo), 0) + 1 FROM QuestionGroupVersion WHERE GroupId = @GroupId
+
+    DELETE FROM @NewId
+    INSERT INTO dbo.QuestionGroupVersion (GroupId, VersionNo, ContextJson, ChangeNote, CreatedBy, CreatedIp, FranchiseId)
+    OUTPUT INSERTED.VersionId INTO @NewId
+    VALUES (@GroupId, @NextVersionNo, @GroupContextJson, ISNULL(NULLIF(LTRIM(RTRIM(@ChangeNote)), ''), 'Edited via question bank UI'), @UserId, @IP, @FranchiseId)
+    SELECT @GroupVersionId = Id FROM @NewId
+
+    UPDATE dbo.QuestionGroup
+    SET CurrentVersionId = @GroupVersionId, Title = NULLIF(LTRIM(RTRIM(@GroupTitle)), ''), SearchText = @GroupSearchText,
+        ModifiedBy = @UserId, ModifiedIp = @IP, ModifiedOn = GETDATE()
+    WHERE GroupId = @GroupId
+
+    SET @output = (SELECT 1 AS ID, 200 AS statuscode, 'OK' AS response FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER);
+    COMMIT RETURN;
+END
+
+-- Mode 39: Paginated question-lot list (listQuestionLotsPaged — the "Question
+-- Lots" page). @json: {"Q": "<lot no fragment>", "Page": <int>, "PageSize": <int>}.
+-- Only lots that still have at least one active question (empty lots are minted
+-- every time the Create Questions page opens, so they would just be noise), newest
+-- first. Unlike Mode 9 (a capped filter dropdown) this pages through all of them.
+-- Q is LIKE-matched against LotNo, escaped the same way as Mode 7. Returns
+-- {"Total", "Items": [{LotId, LotNo, CreatedOn, QuestionCount}]}.
+if(@Mode = 39)
+BEGIN
+    SELECT @Page = Page, @PageSize = PageSize, @Q = Q
+    FROM OPENJSON(@json) WITH (Page INT, PageSize INT, Q NVARCHAR(4000))
+
+    IF @Page IS NULL OR @Page < 1 SET @Page = 1
+    IF @PageSize IS NULL OR @PageSize < 1 SET @PageSize = 20
+    SET @QPattern = CASE WHEN @Q IS NOT NULL AND LTRIM(RTRIM(@Q)) <> ''
+        THEN '%' + REPLACE(REPLACE(REPLACE(LTRIM(RTRIM(@Q)), '[', '[[]'), '%', '[%]'), '_', '[_]') + '%' ELSE NULL END
+
+    SELECT @Total = COUNT(*)
+    FROM QuestionLot ql
+    WHERE ql.IsDeleted = 0 AND ql.FranchiseId = @FranchiseId
+      AND (@QPattern IS NULL OR ql.LotNo LIKE @QPattern)
+      AND EXISTS (SELECT 1 FROM Question q WHERE q.LotId = ql.LotId AND q.IsDeleted = 0 AND q.FranchiseId = @FranchiseId)
+
+    SET @ItemsJson = (
+        SELECT
+            CAST(ql.LotId AS VARCHAR(20)) AS LotId, ql.LotNo, ql.CreatedOn,
+            (SELECT COUNT(*) FROM Question q WHERE q.LotId = ql.LotId AND q.IsDeleted = 0 AND q.FranchiseId = @FranchiseId) AS QuestionCount
+        FROM QuestionLot ql
+        WHERE ql.IsDeleted = 0 AND ql.FranchiseId = @FranchiseId
+          AND (@QPattern IS NULL OR ql.LotNo LIKE @QPattern)
+          AND EXISTS (SELECT 1 FROM Question q WHERE q.LotId = ql.LotId AND q.IsDeleted = 0 AND q.FranchiseId = @FranchiseId)
+        ORDER BY ql.CreatedOn DESC, ql.LotId DESC
+        OFFSET (@Page - 1) * @PageSize ROWS FETCH NEXT @PageSize ROWS ONLY
+        FOR JSON PATH, INCLUDE_NULL_VALUES
+    )
+    IF @ItemsJson IS NULL SET @ItemsJson = '[]'
+
+    SET @output = N'{"ID":1,"statuscode":200,"response":{"Total":' + CAST(@Total AS NVARCHAR(20)) + N',"Items":' + @ItemsJson + N'}}'
+    COMMIT RETURN;
+END
+
+-- =====================================================================
+-- Tag management (the Tags page). Tags/dimensions used to be created only as a
+-- side effect of saving a question (Modes 13/14); these modes let them be listed,
+-- created and renamed on their own. A TagDimension is the key ("subject"), a Tag is a
+-- value inside it ("Reasoning") — the same key -> value shape as the question editor;
+-- there is no hierarchy. Names are unique per franchise (key) / per key (value),
+-- compared case-insensitively by the database collation.
+-- Renaming does not rewrite QuestionSearch.SearchText of questions already
+-- tagged (it holds the old tag text until that question is next saved).
+-- =====================================================================
+
+-- Mode 40: Dimension list with counts (listTagDimensions). @json: {"Q": "<name/code fragment>"}.
+-- Returns [{DimensionId, Code, Name, CreatedOn, TagCount, QuestionCount}] —
+-- TagCount = active tags in it, QuestionCount = distinct live questions carrying at
+-- least one of its tags. An empty list comes back as a null response.
+if(@Mode = 40)
+BEGIN
+    SELECT @Q = Q FROM OPENJSON(@json) WITH (Q NVARCHAR(4000))
+    SET @QPattern = CASE WHEN @Q IS NOT NULL AND LTRIM(RTRIM(@Q)) <> ''
+        THEN '%' + REPLACE(REPLACE(REPLACE(LTRIM(RTRIM(@Q)), '[', '[[]'), '%', '[%]'), '_', '[_]') + '%' ELSE NULL END
+
+    SET @output = (
+        SELECT 1 AS ID, 200 AS statuscode,
+        (
+            SELECT
+                d.DimensionId, d.Code, d.Name, d.CreatedOn,
+                (SELECT COUNT(*) FROM Tag t WHERE t.DimensionId = d.DimensionId AND t.IsDeleted = 0 AND t.FranchiseId = @FranchiseId) AS TagCount,
+                (SELECT COUNT(DISTINCT qt.QuestionId)
+                    FROM QuestionTag qt
+                    JOIN Tag t ON t.TagId = qt.TagId
+                    JOIN Question q ON q.QuestionId = qt.QuestionId
+                    WHERE t.DimensionId = d.DimensionId AND t.IsDeleted = 0 AND qt.IsDeleted = 0
+                      AND q.IsDeleted = 0 AND q.FranchiseId = @FranchiseId) AS QuestionCount
+            FROM TagDimension d
+            WHERE d.IsDeleted = 0 AND d.FranchiseId = @FranchiseId
+              AND (@QPattern IS NULL OR d.Name LIKE @QPattern OR d.Code LIKE @QPattern)
+            ORDER BY d.Name
+            FOR JSON PATH, INCLUDE_NULL_VALUES
+        ) AS response
+        FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER
+    );
+    COMMIT RETURN;
+END
+
+-- Mode 41: One dimension with all its tags (getTagDimension). @json: {"DimensionId": <int>}.
+-- Returns {DimensionId, Code, Name, Tags: [{TagId, Name, QuestionCount, CreatedOn}]} —
+-- QuestionCount = distinct live questions with that tag. A null response means "not found".
+if(@Mode = 41)
+BEGIN
+    SELECT @DimensionId = DimensionId FROM OPENJSON(@json) WITH (DimensionId INT)
+
+    SET @output = (
+        SELECT 1 AS ID, 200 AS statuscode,
+        (
+            SELECT
+                d.DimensionId, d.Code, d.Name,
+                JSON_QUERY((
+                    SELECT
+                        CAST(t.TagId AS VARCHAR(20)) AS TagId, t.Name, t.CreatedOn,
+                        (SELECT COUNT(DISTINCT qt.QuestionId)
+                            FROM QuestionTag qt
+                            JOIN Question q ON q.QuestionId = qt.QuestionId
+                            WHERE qt.TagId = t.TagId AND qt.IsDeleted = 0 AND q.IsDeleted = 0 AND q.FranchiseId = @FranchiseId) AS QuestionCount
+                    FROM Tag t
+                    WHERE t.DimensionId = d.DimensionId AND t.IsDeleted = 0 AND t.FranchiseId = @FranchiseId
+                    ORDER BY t.Name
+                    FOR JSON PATH, INCLUDE_NULL_VALUES
+                )) AS Tags
+            FROM TagDimension d
+            WHERE d.DimensionId = @DimensionId AND d.IsDeleted = 0 AND d.FranchiseId = @FranchiseId
+            FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER
+        ) AS response
+        FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER
+    );
+    COMMIT RETURN;
+END
+
+-- Mode 42: Rename a dimension (renameTagDimension). @json: {"DimensionId": <int>, "Name": "..."}.
+-- The Code never changes, and every tag and question stays attached.
+if(@Mode = 42)
+BEGIN
+    SELECT @DimensionId = DimensionId, @DimName = LTRIM(RTRIM(Name))
+    FROM OPENJSON(@json) WITH (DimensionId INT, Name NVARCHAR(100))
+
+    IF @DimName IS NULL OR @DimName = ''
+    BEGIN
+        SET @output = (SELECT 1 AS ID, 400 AS statuscode, 'Key name is required.' AS response FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER);
+        COMMIT RETURN;
+    END
+    IF NOT EXISTS (SELECT 1 FROM TagDimension WHERE DimensionId = @DimensionId AND IsDeleted = 0 AND FranchiseId = @FranchiseId)
+    BEGIN
+        SET @output = (SELECT 1 AS ID, 404 AS statuscode, 'Key not found.' AS response FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER);
+        COMMIT RETURN;
+    END
+    IF EXISTS (SELECT 1 FROM TagDimension WHERE IsDeleted = 0 AND FranchiseId = @FranchiseId AND Name = @DimName AND DimensionId <> @DimensionId)
+    BEGIN
+        SET @output = (SELECT 1 AS ID, 409 AS statuscode, CONCAT('A key named "', @DimName, '" already exists.') AS response FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER);
+        COMMIT RETURN;
+    END
+
+    UPDATE dbo.TagDimension SET Name = @DimName, ModifiedBy = @UserId, ModifiedIp = @IP, ModifiedOn = GETDATE() WHERE DimensionId = @DimensionId
+
+    SET @output = (SELECT 1 AS ID, 200 AS statuscode, 'OK' AS response FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER);
+    COMMIT RETURN;
+END
+
+-- Mode 43: Rename a tag (renameTag). @json: {"TagId": <bigint>, "Name": "..."}. The name must be
+-- unique inside the tag's own dimension; the tag stays on all its questions.
+if(@Mode = 43)
+BEGIN
+    SELECT @TagId = TagId, @TagValue = LTRIM(RTRIM(Name)) FROM OPENJSON(@json) WITH (TagId BIGINT, Name NVARCHAR(200))
+
+    IF @TagValue IS NULL OR @TagValue = ''
+    BEGIN
+        SET @output = (SELECT 1 AS ID, 400 AS statuscode, 'Value name is required.' AS response FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER);
+        COMMIT RETURN;
+    END
+
+    SET @DimensionId = NULL
+    SELECT @DimensionId = DimensionId FROM Tag WHERE TagId = @TagId AND IsDeleted = 0 AND FranchiseId = @FranchiseId
+    IF @DimensionId IS NULL
+    BEGIN
+        SET @output = (SELECT 1 AS ID, 404 AS statuscode, 'Value not found.' AS response FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER);
+        COMMIT RETURN;
+    END
+    IF EXISTS (SELECT 1 FROM Tag WHERE DimensionId = @DimensionId AND IsDeleted = 0 AND FranchiseId = @FranchiseId AND Name = @TagValue AND TagId <> @TagId)
+    BEGIN
+        SET @output = (SELECT 1 AS ID, 409 AS statuscode, CONCAT('This key already has a value named "', @TagValue, '".') AS response FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER);
+        COMMIT RETURN;
+    END
+
+    UPDATE dbo.Tag SET Name = @TagValue, ModifiedBy = @UserId, ModifiedIp = @IP, ModifiedOn = GETDATE() WHERE TagId = @TagId
+
+    SET @output = (SELECT 1 AS ID, 200 AS statuscode, 'OK' AS response FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER);
+    COMMIT RETURN;
+END
+
+-- Mode 44: Create tags from key -> value pairs (createTagPairs) — the same find-or-create the
+-- question editor does on save (Modes 13/14), without a question. @json: {"Pairs": [{"Key":
+-- "<dimension name>", "Value": "<tag name>"}]}. A key that does not exist becomes a new dimension
+-- (generated Code), a value that does not exist in that key becomes a new tag; anything already
+-- there is left alone. Returns {DimensionsCreated, TagsCreated, TagsExisting}.
+if(@Mode = 44)
+BEGIN
+    SET @PairsJson = NULL
+    SELECT @PairsJson = P FROM OPENJSON(@json) WITH (P NVARCHAR(MAX) '$.Pairs' AS JSON)
+    IF @PairsJson IS NULL
+        SELECT @PairsJson = P FROM OPENJSON(@json) WITH (P NVARCHAR(MAX) '$.Pairs')
+    IF @PairsJson IS NOT NULL AND ISJSON(@PairsJson) = 0 SET @PairsJson = NULL
+
+    DELETE FROM @TagInput
+    INSERT INTO @TagInput (TagKey, TagValue)
+    SELECT LTRIM(RTRIM([Key])), LTRIM(RTRIM(Value))
+    FROM OPENJSON(@PairsJson) WITH ([Key] NVARCHAR(200) '$.Key', Value NVARCHAR(200) '$.Value')
+    WHERE [Key] IS NOT NULL AND LTRIM(RTRIM([Key])) <> '' AND Value IS NOT NULL AND LTRIM(RTRIM(Value)) <> ''
+
+    IF NOT EXISTS (SELECT 1 FROM @TagInput)
+    BEGIN
+        SET @output = (SELECT 1 AS ID, 400 AS statuscode, 'Enter at least one key and value.' AS response FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER);
+        COMMIT RETURN;
+    END
+    IF EXISTS (SELECT 1 FROM @TagInput WHERE LEN(TagKey) > 100)
+    BEGIN
+        SET @output = (SELECT 1 AS ID, 400 AS statuscode, 'A key must be 100 characters or fewer.' AS response FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER);
+        COMMIT RETURN;
+    END
+
+    SET @DimsCreated = 0
+    SET @TagsCreated = 0
+    SET @TagsExisting = 0
+    SELECT @TagRowNo = MIN(RowNo), @TagMaxRowNo = MAX(RowNo) FROM @TagInput
+    WHILE @TagRowNo IS NOT NULL AND @TagRowNo <= @TagMaxRowNo
+    BEGIN
+        SELECT @TagKey = TagKey, @TagValue = TagValue FROM @TagInput WHERE RowNo = @TagRowNo
+
+        SET @DimensionId = NULL
+        SELECT TOP 1 @DimensionId = DimensionId FROM TagDimension
+        WHERE IsDeleted = 0 AND FranchiseId = @FranchiseId AND (Name = @TagKey OR Code = @TagKey)
+
+        IF @DimensionId IS NULL
+        BEGIN
+            SET @DimCode = LOWER(LEFT(REPLACE(REPLACE(REPLACE(REPLACE(@TagKey, ' ', '_'), '-', '_'), '/', '_'), '\', '_'), 40))
+            IF @DimCode = '' SET @DimCode = 'tag'
+            SET @DimCode = @DimCode + '_' + LOWER(CONVERT(VARCHAR(8), CRYPT_GEN_RANDOM(4), 2))
+            INSERT INTO dbo.TagDimension (Code, Name, CreatedBy, CreatedIp, FranchiseId) VALUES (@DimCode, @TagKey, @UserId, @IP, @FranchiseId)
+            SET @DimensionId = CAST(SCOPE_IDENTITY() AS INT)
+            SET @DimsCreated += 1
+        END
+
+        SET @TagId = NULL
+        SELECT TOP 1 @TagId = TagId FROM Tag WHERE DimensionId = @DimensionId AND IsDeleted = 0 AND FranchiseId = @FranchiseId AND Name = @TagValue
+
+        IF @TagId IS NULL
+        BEGIN
+            INSERT INTO dbo.Tag (DimensionId, Name, CreatedBy, CreatedIp, FranchiseId) VALUES (@DimensionId, @TagValue, @UserId, @IP, @FranchiseId)
+            SET @TagsCreated += 1
+        END
+        ELSE
+            SET @TagsExisting += 1
+
+        SET @TagRowNo += 1
+    END
+
+    SET @output = (
+        SELECT 1 AS ID, 200 AS statuscode,
+        (SELECT @DimsCreated AS DimensionsCreated, @TagsCreated AS TagsCreated, @TagsExisting AS TagsExisting FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER) AS response
+        FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER
+    );
+    COMMIT RETURN;
+END
+
+-- =====================================================================
+-- Exam attempts report (the Exam Attempts page).
+-- =====================================================================
+
+-- Mode 45: Paginated list of student attempts (listExamAttempts). @json: {"MockTestId": <bigint> | null,
+-- "Status": "attempted" | "submitted" | null, "Page": <int>, "PageSize": <int>}. Admin-authored exams of this
+-- franchise only (IsPersonalized = 0, same scope as the dashboard, Mode 34). "submitted" = the student
+-- submitted (Attempt.SubmittedOn is set); "attempted" = started but not submitted yet; null = both. Newest
+-- start first. ExamType = the exam's TestKind name. Returns {"Total", "Items": [{AttemptId, MockTestId, ExamName, ExamCode, StudentId,
+-- ExamType, StudentName, StudentEmail, StudentPhone, StartedOn, SubmittedOn, ScoreTotal, TotalMarks}]}. ScoreTotal is only returned for a
+-- submitted attempt. StudentName comes from the LMS database (DBDTHLMSPro..AspNetUsers: Id = Attempt.StudentId,
+-- same FranchiseId), "FirstName LastName", plus its Email / PhoneNumber; all three are NULL when no such user is
+-- found (the app then shows StudentId).
+if(@Mode = 45)
+BEGIN
+    SELECT @MockTestId = MockTestId, @AttemptFilter = Status, @Page = Page, @PageSize = PageSize
+    FROM OPENJSON(@json) WITH (MockTestId BIGINT, Status VARCHAR(20), Page INT, PageSize INT)
+
+    IF @Page IS NULL OR @Page < 1 SET @Page = 1
+    IF @PageSize IS NULL OR @PageSize < 1 SET @PageSize = 20
+    IF @AttemptFilter NOT IN ('attempted', 'submitted') SET @AttemptFilter = NULL
+
+    SELECT @Total = COUNT(*)
+    FROM Attempt a
+    JOIN MockTest m ON m.MockTestId = a.MockTestId
+    WHERE a.IsDeleted = 0 AND m.IsDeleted = 0 AND m.IsPersonalized = 0 AND m.FranchiseId = @FranchiseId
+      AND (@MockTestId IS NULL OR a.MockTestId = @MockTestId)
+      AND (@AttemptFilter IS NULL
+           OR (@AttemptFilter = 'submitted' AND a.SubmittedOn IS NOT NULL)
+           OR (@AttemptFilter = 'attempted' AND a.SubmittedOn IS NULL))
+
+    SET @ItemsJson = (
+        SELECT
+            CAST(a.AttemptId AS VARCHAR(20)) AS AttemptId, CAST(a.MockTestId AS VARCHAR(20)) AS MockTestId,
+            m.Name AS ExamName, m.Code AS ExamCode, tk.Name AS ExamType, a.StudentId,
+            NULLIF(LTRIM(RTRIM(CONCAT(au.FirstName, ' ', au.LastName))), '') AS StudentName,
+            au.Email AS StudentEmail, au.PhoneNumber AS StudentPhone,
+            a.StartedOn, a.SubmittedOn,
+            CASE WHEN a.SubmittedOn IS NOT NULL THEN a.ScoreTotal END AS ScoreTotal,
+            ep.TotalMarks
+        FROM Attempt a
+        JOIN MockTest m ON m.MockTestId = a.MockTestId
+        JOIN ExamPaper ep ON ep.PaperId = m.PaperId
+        JOIN TestKind tk ON tk.TestKindId = m.TestKindId
+        -- The LMS database uses a different collation than this one, hence COLLATE DATABASE_DEFAULT on its side.
+        LEFT JOIN DBDTHLMSPro..AspNetUsers au ON a.StudentId = au.Id COLLATE DATABASE_DEFAULT AND au.FranchiseId = a.FranchiseId
+        WHERE a.IsDeleted = 0 AND m.IsDeleted = 0 AND m.IsPersonalized = 0 AND m.FranchiseId = @FranchiseId
+          AND (@MockTestId IS NULL OR a.MockTestId = @MockTestId)
+          AND (@AttemptFilter IS NULL
+               OR (@AttemptFilter = 'submitted' AND a.SubmittedOn IS NOT NULL)
+               OR (@AttemptFilter = 'attempted' AND a.SubmittedOn IS NULL))
+        ORDER BY a.StartedOn DESC, a.AttemptId DESC
+        OFFSET (@Page - 1) * @PageSize ROWS FETCH NEXT @PageSize ROWS ONLY
+        FOR JSON PATH, INCLUDE_NULL_VALUES
+    )
+    IF @ItemsJson IS NULL SET @ItemsJson = '[]'
+
+    SET @output = N'{"ID":1,"statuscode":200,"response":{"Total":' + CAST(@Total AS NVARCHAR(20)) + N',"Items":' + @ItemsJson + N'}}'
+    COMMIT RETURN;
+END
+
+-- Mode 46: Exam picker options for the attempts filter (listExamOptions). @json: {}. Every admin-authored
+-- exam of this franchise, by name: [{MockTestId, Name, Code}]. An empty list comes back as a null response.
+if(@Mode = 46)
+BEGIN
+    SET @output = (
+        SELECT 1 AS ID, 200 AS statuscode,
+        (
+            SELECT CAST(m.MockTestId AS VARCHAR(20)) AS MockTestId, m.Name, m.Code
+            FROM MockTest m
+            WHERE m.IsDeleted = 0 AND m.IsPersonalized = 0 AND m.FranchiseId = @FranchiseId
+            ORDER BY m.Name, m.MockTestId
+            FOR JSON PATH, INCLUDE_NULL_VALUES
+        ) AS response
+        FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER
+    );
+    COMMIT RETURN;
+END
+
+-- Mode 47: Delete an attempt (deleteExamAttempt). @json: {"AttemptId": <bigint>}. HARD delete (unlike the
+-- soft deletes elsewhere in this file, by request): the attempt AND everything under it — the selected
+-- answers (AttemptAnswer), section progress (AttemptSection) and event log (AttemptEvent) — are removed,
+-- children first because they reference Attempt by foreign key. The student can then start the exam afresh.
+-- Only attempts on this franchise's admin-authored exams (same scope as Mode 45). Returns {AnswersDeleted}.
+-- Aggregates already derived from the attempt (QuestionStat counters, topic mastery) are not rolled back.
+if(@Mode = 47)
+BEGIN
+    SELECT @AttemptId = AttemptId FROM OPENJSON(@json) WITH (AttemptId BIGINT)
+
+    IF NOT EXISTS (
+        SELECT 1 FROM Attempt a JOIN MockTest m ON m.MockTestId = a.MockTestId
+        WHERE a.AttemptId = @AttemptId AND a.IsDeleted = 0 AND m.IsDeleted = 0 AND m.IsPersonalized = 0 AND m.FranchiseId = @FranchiseId
+    )
+    BEGIN
+        SET @output = (SELECT 1 AS ID, 404 AS statuscode, 'Attempt not found.' AS response FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER);
+        COMMIT RETURN;
+    END
+
+    DELETE FROM dbo.AttemptAnswer WHERE AttemptId = @AttemptId
+    SET @Total = @@ROWCOUNT
+    DELETE FROM dbo.AttemptSection WHERE AttemptId = @AttemptId
+    DELETE FROM dbo.AttemptEvent WHERE AttemptId = @AttemptId
+    DELETE FROM dbo.Attempt WHERE AttemptId = @AttemptId
+
+    SET @output = (
+        SELECT 1 AS ID, 200 AS statuscode,
+        (SELECT @Total AS AnswersDeleted FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER) AS response
+        FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER
+    );
+    COMMIT RETURN;
+END
+
 END
 COMMIT TRANSACTION
 
@@ -1832,19 +2550,19 @@ COMMIT TRANSACTION
         ROLLBACK TRANSACTION -- Rollback transaction in case of error
 
         -- Insert error details into the DatabaseError table
-        -- INSERT INTO DatabaseError (Error_State, Error_Line, ERROR_MESSAGE, ERROR_PROCEDURE, DateOfError, FranchiseId, IpAddress, jsonData, Mode, UserId)
-        -- VALUES (
-        --     ERROR_STATE(),
-        --     ERROR_LINE(),
-        --     ERROR_MESSAGE(),
-        --     ERROR_PROCEDURE(),
-        --     GETDATE(),
-        --     @FranchiseId,
-        --     @IP,
-        --     @json,
-        --     @Mode,
-        --     @UserId
-        -- );
+        INSERT INTO DatabaseError (Error_State, Error_Line, ERROR_MESSAGE, ERROR_PROCEDURE, DateOfError, FranchiseId, IpAddress, jsonData, Mode, UserId)
+        VALUES (
+            ERROR_STATE(),
+            ERROR_LINE(),
+            ERROR_MESSAGE(),
+            ERROR_PROCEDURE(),
+            GETDATE(),
+            @FranchiseId,
+            @IP,
+            @json,
+            @Mode,
+            @UserId
+        );
 
 		SET @output = JSON_QUERY((select 0 as ID, 400 as StatusCode, ERROR_MESSAGE() as response FOR JSON PATH, WITHOUT_ARRAY_WRAPPER));
     END CATCH

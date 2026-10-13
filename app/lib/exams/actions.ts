@@ -34,7 +34,7 @@ export type CreateMockTestFromDraftResult =
   | { ok: true; mockTestId: string; templateId: string | null }
   | { ok: false; error: string };
 
-// Mode 22 of dbo.spMcqTeacherService — see mcq-admin/sql/spMcqTeacherService.sql.
+// Mode 22 of dbo.spMcqTeacherService — see mcq-admin/sql/spMcqTeacherService-deploy.sql.
 // The exam-creation page's single entry point: design a shape from scratch
 // or starting from a copied template, pick a test kind, name the exam, and
 // this both materializes a real MockTest draft and — only if the user opted
@@ -141,7 +141,6 @@ export async function updateMockTestFromDraft(
       RulesJson: {
         questionType: s.questionType,
         questions: s.questions,
-        mandatory: s.mandatory,
         marks: s.marks,
         negative: s.negative,
         durationMin: s.durationMin,

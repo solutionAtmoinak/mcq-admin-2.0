@@ -1,7 +1,7 @@
 import { callTeacherService } from "@/app/lib/db/teacherService";
 import { getServiceOptions } from "@/app/lib/db/serviceConfig";
 
-// Mode 34 of dbo.spMcqTeacherService — see mcq-admin/sql/spMcqTeacherService.sql.
+// Mode 34 of dbo.spMcqTeacherService — see mcq-admin/sql/spMcqTeacherService-deploy.sql.
 type RawAnalytics = {
   TotalExams: number;
   TotalAttempts: number;

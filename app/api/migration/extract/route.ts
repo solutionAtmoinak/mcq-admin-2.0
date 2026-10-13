@@ -2,10 +2,10 @@ import { callMigrationService } from "@/app/lib/db/migrationService";
 import { NextResponse } from "next/server";
 
 // Endpoint backing /migration/json's "Extract by Section ID" option. Calls
-// Mode 1 (extractBySectionId) of spMcqMigrationService.sql, which reads the
+// Mode 1 (extractBySectionId) of spMcqMigrationService-deploy.sql, which reads the
 // legacy TblMasterMCQ4Question tree directly (DBDthLmsPro) for one
 // MCQSectionId and returns rows already shaped to Mode 2's input contract —
-// see mcq-admin/sql/spMcqMigrationService.sql for the full row shape. This
+// see mcq-admin/sql/spMcqMigrationService-deploy.sql for the full row shape. This
 // replaces manually running migrate-section-566-preview.sql in SSMS and
 // uploading its output as a file.
 //

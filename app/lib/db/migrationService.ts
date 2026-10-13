@@ -6,7 +6,7 @@ import { callStoredProcedure } from "@/app/lib/db/executor";
 // dedicated stored procedure for one-off migration work (Mode 1:
 // extractBySectionId, Mode 2: createQuestionsBulk), kept separate from the
 // production dbo.spMcqTeacherService. See
-// mcq-admin/sql/spMcqMigrationService.sql for the full per-mode contract and
+// mcq-admin/sql/spMcqMigrationService-deploy.sql for the full per-mode contract and
 // executor.ts for the actual HTTP/envelope handling shared with
 // teacherService.ts's callTeacherService.
 export async function callMigrationService<T>(

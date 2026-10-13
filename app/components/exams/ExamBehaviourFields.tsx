@@ -51,6 +51,20 @@ export default function ExamBehaviourFields({
             </span>
           </span>
         </label>
+        <label className="flex items-start gap-3">
+          <SwitchToggle
+            checked={settings.randomizeQuestions}
+            onChange={(next) => onChange({ randomizeQuestions: next })}
+            disabled={disabled}
+          />
+          <span>
+            <span className="block text-sm font-medium text-zinc-700">Randomise questions</span>
+            <span className="block text-xs text-zinc-400">
+              The order of questions is randomised for each student. Questions that belong to the same case study are
+              not randomised — they stay together, in their set order.
+            </span>
+          </span>
+        </label>
       </div>
     </div>
   );

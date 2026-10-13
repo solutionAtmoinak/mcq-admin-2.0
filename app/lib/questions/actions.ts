@@ -1,7 +1,14 @@
 "use server";
 
 import { callTeacherService } from "@/app/lib/db/teacherService";
-import { getQuestionForEdit } from "./data";
+import { getCaseStudy, getQuestionForEdit, listCaseStudies } from "./data";
+import type { CaseStudyDetail, CaseStudyListItem } from "./data";
+import {
+  buildCaseStudyContext,
+  buildCaseStudySearchText,
+  validateCaseStudy,
+  type CaseStudyRef,
+} from "./caseStudy";
 import {
   buildContent,
   buildSearchText,
@@ -35,7 +42,7 @@ function errorFrom(result: unknown, fallback: string): string {
   return typeof result === "string" ? result : fallback;
 }
 
-// Mode 12 of dbo.spMcqTeacherService — see mcq-admin/sql/spMcqTeacherService.sql.
+// Mode 12 of dbo.spMcqTeacherService — see mcq-admin/sql/spMcqTeacherService-deploy.sql.
 // Mints a new lot the moment the Create Questions page loads (see
 // QuestionBankEditor's initial state); the SP itself generates LotNo and
 // retries on a rare unique-constraint collision, so this is a single call.
@@ -67,6 +74,9 @@ export async function createQuestions(
   for (const [i, q] of inputs.entries()) {
     const err = validateQuestion(q, validStatusValues);
     if (err) return { ok: false, error: `Question ${i + 1}: ${err}` };
+    if (q.typeCode === "case_study" && !q.caseStudy?.groupId) {
+      return { ok: false, error: `Question ${i + 1}: save its case study first.` };
+    }
   }
 
   const explicitCodes = inputs.map((q) => q.code?.trim()).filter((c): c is string => !!c);
@@ -95,6 +105,8 @@ export async function createQuestions(
       Tags: q.tags
         .map((t) => ({ Key: t.key.trim(), Value: t.value.trim() }))
         .filter((t) => t.Key && t.Value),
+      GroupId: q.typeCode === "case_study" ? (q.caseStudy?.groupId ?? null) : null,
+      GroupSeq: q.typeCode === "case_study" ? (q.groupSeq ?? null) : null,
     };
   });
 
@@ -128,6 +140,9 @@ export async function updateQuestion(
   const questionStatusOptions = await getServiceOptions("QUESTION_STATUS");
   const err = validateQuestion(input, questionStatusOptions.map((o) => o.value));
   if (err) return { ok: false, error: err };
+  if (input.typeCode === "case_study" && !input.caseStudy?.groupId) {
+    return { ok: false, error: "Save the case study first." };
+  }
 
   const { presentation, answer } = buildContent(input);
 
@@ -143,6 +158,11 @@ export async function updateQuestion(
     Tags: input.tags
       .map((t) => ({ Key: t.key.trim(), Value: t.value.trim() }))
       .filter((t) => t.Key && t.Value),
+    // Always (re)apply the case study: a case_study question points at its
+    // saved paragraph, any other kind is detached. See Mode 14.
+    SetGroup: true,
+    GroupId: input.typeCode === "case_study" ? (input.caseStudy?.groupId ?? null) : null,
+    GroupSeq: input.typeCode === "case_study" ? (input.groupSeq ?? null) : null,
   });
 
   if (typeof result === "string" && result !== "OK") {
@@ -214,4 +234,71 @@ export async function getQuestionInputForDuplicate(
   const existing = await getQuestionForEdit(questionId);
   if (!existing) return { ok: false, error: "Question not found." };
   return { ok: true, input: existing.input };
+}
+
+export type SaveCaseStudyResult =
+  | { ok: true; groupId: string; code: string }
+  | { ok: false; error: string };
+
+// Creates the case study (Mode 37) when it has no groupId yet, otherwise saves
+// the edit as a new QuestionGroupVersion (Mode 38) — same versioned-edit rule as
+// updateQuestion. Questions already pointing at it pick the new paragraph up
+// automatically; exams that snapshotted an older version keep that one.
+export async function saveCaseStudy(
+  draft: Pick<CaseStudyRef, "groupId" | "code" | "title" | "text">,
+  changeNote?: string,
+): Promise<SaveCaseStudyResult> {
+  const err = validateCaseStudy(draft);
+  if (err) return { ok: false, error: err };
+
+  const payload = {
+    Title: draft.title.trim() || null,
+    ContextJson: JSON.stringify(buildCaseStudyContext(draft)),
+    SearchText: buildCaseStudySearchText(draft),
+  };
+
+  if (draft.groupId) {
+    const result = await callTeacherService<string>(38, {
+      GroupId: draft.groupId,
+      ...payload,
+      ChangeNote: changeNote?.trim() || null,
+    });
+    if (typeof result === "string" && result !== "OK") return { ok: false, error: result };
+    revalidatePath("/questions");
+    return { ok: true, groupId: draft.groupId, code: draft.code ?? "" };
+  }
+
+  const result = await callTeacherService<{ GroupId: string; Code: string } | string>(37, payload);
+  if (typeof result === "string" || !result) {
+    return { ok: false, error: errorFrom(result, "Failed to save the case study.") };
+  }
+  return { ok: true, groupId: result.GroupId, code: result.Code };
+}
+
+export type CaseStudySearchResult =
+  | { ok: true; items: CaseStudyListItem[]; total: number }
+  | { ok: false; error: string };
+
+// Powers the "choose existing case study" picker.
+export async function searchCaseStudies(q: string, page = 1): Promise<CaseStudySearchResult> {
+  try {
+    const { items, total } = await listCaseStudies(q.trim(), page, 15);
+    return { ok: true, items, total };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+}
+
+export type LoadCaseStudyResult =
+  | { ok: true; caseStudy: CaseStudyDetail }
+  | { ok: false; error: string };
+
+export async function loadCaseStudy(groupId: string): Promise<LoadCaseStudyResult> {
+  try {
+    const caseStudy = await getCaseStudy(groupId);
+    if (!caseStudy) return { ok: false, error: "Case study not found." };
+    return { ok: true, caseStudy };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
 }

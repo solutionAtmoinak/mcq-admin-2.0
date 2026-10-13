@@ -8,13 +8,13 @@ import { createQuestionLot } from "@/app/lib/questions/actions";
 // carrying Mode 2's exact PresentationJson/AnswerJson/SearchText contract
 // (mirrors buildContent()/buildSearchText() in app/lib/questions/schema.ts)
 // — and calls Mode 2 (createQuestionsBulk) of the dedicated
-// spMcqMigrationService.sql, in a SINGLE call with no batch-size cap. Mode 2
+// spMcqMigrationService-deploy.sql, in a SINGLE call with no batch-size cap. Mode 2
 // runs in one transaction, so this is all-or-nothing: a mid-batch failure
 // rolls the whole insert back, nothing partial is left behind.
 //
 // Rows can come from an uploaded file, or from /api/migration/extract (Mode
 // 1 of the same SP) — see mcq-admin/sql/migrate-section-566-preview.sql /
-// spMcqMigrationService.sql for the row-shape rationale.
+// spMcqMigrationService-deploy.sql for the row-shape rationale.
 //
 // Known gap: Question.CreatedBy is stamped server-side from the
 // authenticated caller, not from the request body — so questions created

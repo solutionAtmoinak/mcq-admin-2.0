@@ -166,6 +166,14 @@ export default async function QuestionsPage({
                 </td>
                 <td className="max-w-md px-4 py-2 text-zinc-700">
                   <QuestionStemCell questionCode={q.code} stem={q.stemPreview} />
+                  {q.groupId && (
+                    <span
+                      className="mt-0.5 inline-block rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-medium text-indigo-700"
+                      title="This question belongs to a case study (shared paragraph)"
+                    >
+                      Case study{q.groupCode ? ` · ${q.groupCode}` : ""}
+                    </span>
+                  )}
                 </td>
                 <td className="px-4 py-2 text-zinc-500">{q.typeName}</td>
                 <td className="px-4 py-2 text-zinc-500">

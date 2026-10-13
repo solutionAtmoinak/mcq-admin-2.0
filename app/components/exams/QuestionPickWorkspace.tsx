@@ -65,7 +65,7 @@ export default function QuestionPickWorkspace({
                   <div>
                     <span className="text-sm font-medium text-zinc-800">{s.name}</span>
                     <p className="mt-0.5 text-xs text-zinc-400">
-                      {s.mandatory} of {s.pool} mandatory to attempt · {s.questionType} · {s.marks} marks
+                      {s.pool} questions · {s.questionType} · {s.marks} marks
                       {s.negative > 0 ? ` / -${s.negative} negative` : ""}
                     </p>
                   </div>

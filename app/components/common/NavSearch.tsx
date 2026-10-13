@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
-import { MdClose, MdHome, MdSearch } from "react-icons/md";
 import { NAV_GROUPS } from "@/app/components/common/navGroups";
+import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { MdClose, MdHome, MdSearch } from "react-icons/md";
 
 type NavSearchItem = (typeof SEARCH_ITEMS)[number];
 
@@ -112,7 +112,7 @@ export default function NavSearch() {
         <ul
           id="nav-search-results"
           role="listbox"
-          className="absolute inset-x-0 top-full z-50 mt-1 max-h-[60vh] overflow-y-auto rounded-xl border border-zinc-200 bg-white py-1 shadow-lg"
+          className="absolute inset-x-0 top-full z-50 mt-1 max-h-[60vh] overflow-y-auto rounded-xl border border-zinc-200 bg-white shadow-lg py-4"
         >
           {results.length === 0 ? (
             <li className="px-4 py-3 text-sm text-zinc-500">No menu items match “{query.trim()}”.</li>
@@ -133,9 +133,8 @@ export default function NavSearch() {
                     aria-selected={i === active}
                     onMouseEnter={() => setActive(i)}
                     onClick={() => go(item)}
-                    className={`flex w-full items-center gap-3 px-4 py-2 text-left text-sm transition-colors ${
-                      i === active ? "bg-indigo-600/10 text-brand" : "text-zinc-700"
-                    }`}
+                    className={`flex w-full items-center gap-3 px-4 py-2 text-left text-sm transition-colors ${i === active ? "bg-indigo-600/10 text-brand" : "text-zinc-700"
+                      }`}
                   >
                     <Icon size={18} className="shrink-0" />
                     <span className="min-w-0 flex-1">{item.label}</span>

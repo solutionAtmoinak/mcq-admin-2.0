@@ -2,7 +2,7 @@ import { callMigrationService } from "@/app/lib/db/migrationService";
 import { NextResponse } from "next/server";
 
 // Endpoint backing /migration/json's "Extract by Section ID" option. Calls
-// Mode 3 (listSectionQuestionIds) of spMcqMigrationService.sql — a cheap,
+// Mode 3 (listSectionQuestionIds) of spMcqMigrationService-deploy.sql — a cheap,
 // join-free lookup of just MCQQuestionId for one section, so large sections
 // (1000+ questions) can be paged through via /api/migration/extract's
 // questionIds filter instead of timing out on one big Mode 1 call.

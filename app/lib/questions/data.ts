@@ -1,6 +1,6 @@
 import { callTeacherService } from "@/app/lib/db/teacherService";
 import { getServiceOptions } from "@/app/lib/db/serviceConfig";
-import { emptyQuestion } from "./schema";
+import { emptyQuestion, isOptionBasedType } from "./schema";
 import type {
   ReferenceData,
   ReferenceTagOption,
@@ -15,7 +15,7 @@ function assertOk<T>(result: T | string | undefined, fallback: string): T {
   return result;
 }
 
-// Mode 5 of dbo.spMcqTeacherService — see mcq-admin/sql/spMcqTeacherService.sql.
+// Mode 5 of dbo.spMcqTeacherService — see mcq-admin/sql/spMcqTeacherService-deploy.sql.
 type RawReferenceData = {
   QuestionTypes: { Id: number; Code: string; Name: string }[] | null;
   Dimensions: { Id: number; Code: string; Name: string }[] | null;
@@ -90,6 +90,9 @@ export type QuestionListItem = {
   tagNames: string[];
   createdOn: string;
   lotNo: string | null;
+  // Set when the question belongs to a case study (shared paragraph).
+  groupId: string | null;
+  groupCode: string | null;
 };
 
 export type QuestionListFilters = {
@@ -134,7 +137,7 @@ function stemPreviewFrom(presentation: unknown): string {
 }
 
 // Mode 7's SP is meant to return Presentation/TagNames as JSON-text strings
-// rather than embedded JSON (see spMcqTeacherService.sql's Mode 7 comment —
+// rather than embedded JSON (see spMcqTeacherService-deploy.sql's Mode 7 comment —
 // JSON_QUERY-embedding them corrupts SQL Server's FOR JSON output once a
 // page's combined content crosses 65,535 characters) — but tolerate an
 // already-embedded object/array too (i.e. a deployed SP still using
@@ -163,6 +166,8 @@ type RawQuestionListItem = {
   TagNames: unknown;
   CreatedOn: string;
   LotNo: string | null;
+  GroupId: string | null;
+  GroupCode: string | null;
 };
 
 type RawQuestionListResult = { Total: number; Items: RawQuestionListItem[] | null };
@@ -191,6 +196,8 @@ export async function listQuestions(
       tagNames: (parseJsonMaybe<{ Name: string }[]>(q.TagNames) ?? []).map((t) => t.Name),
       createdOn: q.CreatedOn,
       lotNo: q.LotNo,
+      groupId: q.GroupId,
+      groupCode: q.GroupCode,
     })),
     total: result.Total ?? 0,
   };
@@ -292,6 +299,8 @@ type RawQuestionForEdit = {
   CreatedBy: string;
   CreatedOn: string;
   LotNo: string | null;
+  GroupId: string | null;
+  GroupSeq: number | null;
   Tags: { DimensionName: string; TagName: string }[] | null;
 } | null;
 
@@ -317,7 +326,7 @@ export async function getQuestionForEdit(questionId: string): Promise<EditableQu
   };
 
   const typeCode = q.TypeCode as QuestionInput["typeCode"];
-  const isOptionBased = typeCode === "mcq_single" || typeCode === "msq";
+  const isOptionBased = isOptionBasedType(typeCode);
 
   const input = emptyQuestion({
     code: q.Code,
@@ -337,7 +346,14 @@ export async function getQuestionForEdit(questionId: string): Promise<EditableQu
     tags: q.Tags?.length
       ? q.Tags.map((t) => ({ key: t.DimensionName, value: t.TagName }))
       : [{ key: "", value: "" }],
+    groupSeq: q.GroupSeq,
   });
+
+  // A case_study question carries its paragraph.
+  if (q.GroupId) {
+    const cs = await getCaseStudy(q.GroupId);
+    if (cs) input.caseStudy = { groupId: cs.groupId, code: cs.code, title: cs.title, text: cs.text };
+  }
 
   return {
     questionId: q.QuestionId,
@@ -349,5 +365,157 @@ export async function getQuestionForEdit(questionId: string): Promise<EditableQu
     createdOn: q.CreatedOn,
     lotNo: q.LotNo,
     input,
+  };
+}
+
+// ---- Case studies (shared paragraph + several questions) ----
+// Modes 35/36 of dbo.spMcqTeacherService. Storage and ContextJson shape: see
+// app/lib/questions/caseStudy.ts.
+
+export type CaseStudyListItem = {
+  groupId: string;
+  code: string | null;
+  title: string | null;
+  preview: string;
+  questionCount: number;
+  createdOn: string;
+};
+
+type RawCaseStudyListItem = {
+  GroupId: string;
+  Code: string | null;
+  Title: string | null;
+  Preview: string | null;
+  QuestionCount: number;
+  CreatedOn: string;
+};
+
+type RawCaseStudyListResult = { Total: number; Items: RawCaseStudyListItem[] | null };
+
+export async function listCaseStudies(
+  q: string,
+  page: number,
+  pageSize: number,
+): Promise<{ items: CaseStudyListItem[]; total: number }> {
+  const result = assertOk(
+    await callTeacherService<RawCaseStudyListResult | string>(35, {
+      Q: q,
+      Page: page,
+      PageSize: pageSize,
+    }),
+    "Failed to load case studies.",
+  );
+
+  return {
+    items: (result.Items ?? []).map((c) => ({
+      groupId: c.GroupId,
+      code: c.Code,
+      title: c.Title,
+      preview: previewWithoutTitle(c.Preview, c.Title),
+      questionCount: c.QuestionCount,
+      createdOn: c.CreatedOn,
+    })),
+    total: result.Total ?? 0,
+  };
+}
+
+export type CaseStudyQuestion = {
+  id: string;
+  code: string;
+  groupSeq: number | null;
+  status: number;
+  stemPreview: string;
+};
+
+export type CaseStudyDetail = {
+  groupId: string;
+  code: string | null;
+  title: string;
+  text: string;
+  versionNo: number;
+  questions: CaseStudyQuestion[];
+};
+
+type RawCaseStudy = {
+  GroupId: string;
+  Code: string | null;
+  Title: string | null;
+  VersionNo: number | null;
+  Context: { title?: string; text?: string } | null;
+  Questions:
+    | { Id: string; Code: string; GroupSeq: number | null; Status: number; StemPreview: string | null }[]
+    | null;
+} | null;
+
+export async function getCaseStudy(groupId: string): Promise<CaseStudyDetail | null> {
+  const g = assertOk(
+    await callTeacherService<RawCaseStudy | string>(36, { GroupId: groupId }),
+    "Failed to load case study.",
+  );
+  if (!g) return null;
+
+  const ctx = g.Context ?? {};
+  return {
+    groupId: g.GroupId,
+    code: g.Code,
+    // Title lives in both QuestionGroup.Title and ContextJson; the version's
+    // copy is the one that matches the text shown with it.
+    title: ctx.title ?? g.Title ?? "",
+    text: ctx.text ?? "",
+    versionNo: g.VersionNo ?? 1,
+    questions: (g.Questions ?? []).map((q) => ({
+      id: q.Id,
+      code: q.Code,
+      groupSeq: q.GroupSeq,
+      status: q.Status,
+      stemPreview: q.StemPreview ?? "",
+    })),
+  };
+}
+
+// QuestionGroup.SearchText is "<title> <paragraph>" (so a search matches either),
+// which makes the SP's Preview start with the title. The picker already shows the
+// title as the heading, so drop that leading copy from the preview.
+function previewWithoutTitle(preview: string | null, title: string | null): string {
+  const text = (preview ?? "").trim();
+  const t = (title ?? "").trim();
+  return t && text.startsWith(t) ? text.slice(t.length).trim() : text;
+}
+
+// ---- Question lots list (the "Question Lots" page) ----
+
+export type QuestionLotListItem = {
+  lotId: string;
+  lotNo: string;
+  createdOn: string;
+  questionCount: number;
+};
+
+// Mode 39.
+type RawQuestionLotListResult = {
+  Total: number;
+  Items: { LotId: string; LotNo: string; CreatedOn: string; QuestionCount: number }[] | null;
+};
+
+// All lots that still have at least one active question, newest first, paged.
+// (listQuestionLots above is the capped dropdown for the question filter.)
+export async function listQuestionLotsPaged(
+  q: string,
+  page: number,
+  pageSize: number,
+): Promise<{ items: QuestionLotListItem[]; total: number }> {
+  const result = assertOk(
+    await callTeacherService<RawQuestionLotListResult | string>(39, { Q: q, Page: page, PageSize: pageSize }),
+    "Failed to load question lots.",
+  );
+
+  return {
+    items: (result.Items ?? []).map((l) => ({
+      lotId: l.LotId,
+      lotNo: l.LotNo,
+      createdOn: l.CreatedOn,
+      questionCount: l.QuestionCount,
+    })),
+    total: result.Total ?? 0,
   };
 }

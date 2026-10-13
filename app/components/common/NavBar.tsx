@@ -53,7 +53,7 @@ export default function NavBar() {
         </Sidenav.Header>
         <Sidenav.Body className="flex-1">
           <Nav>
-            <Nav.Item as={Link} href="/" icon={<FaChartColumn />} active={pathname === "/"}>
+            <Nav.Item as={Link} href="/" icon={<FaChartColumn className="text-indigo-400 dark:text-indigo-500" />} active={pathname === "/"}>
               Dashboard
             </Nav.Item>
             {/* {NAV_GROUPS.map((group) => (
@@ -89,7 +89,7 @@ export default function NavBar() {
                       key={item.href}
                       as={Link}
                       href={item.href}
-                      icon={<item.icon />}
+                      icon={<item.icon className="text-indigo-400 dark:text-indigo-500" />}
                       active={item.match(pathname)}
                     >
                       {item.label}

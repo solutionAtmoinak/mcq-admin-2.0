@@ -280,7 +280,13 @@ function oMathToLatex(oMathNode: OrderedNode): string {
 
 // ---- Paragraph (plain text + inline math) flattening ----
 
-function runText(rNode: OrderedNode): string {
+// Options for the extractor. The question importer wants one single-line field
+// per paragraph (a line break inside a stem/option is just a space), so that is
+// the default; a case-study paragraph is prose where line breaks and display
+// equations matter, so it asks for `keepLineBreaks`.
+export type WordExtractOptions = { keepLineBreaks?: boolean };
+
+function runText(rNode: OrderedNode, opts: WordExtractOptions): string {
   let s = "";
   for (const k of children(rNode)) {
     const t = tagName(k);
@@ -289,7 +295,7 @@ function runText(rNode: OrderedNode): string {
     } else if (t === "w:tab") {
       s += "\t";
     } else if (t === "w:br" || t === "w:cr") {
-      s += " ";
+      s += opts.keepLineBreaks ? "\n" : " ";
     } else if (t === "w:noBreakHyphen") {
       s += "-";
     }
@@ -301,27 +307,34 @@ function runText(rNode: OrderedNode): string {
 // interleaving plain text runs with any inline equations converted to
 // `\( ... \)` LaTeX — this ordering is exactly why fast-xml-parser is used
 // with preserveOrder: true instead of its default tag-grouped output.
-function paragraphToLine(pNode: OrderedNode): string {
+function paragraphToLine(pNode: OrderedNode, opts: WordExtractOptions = {}): string {
   let out = "";
   for (const k of children(pNode)) {
     const tag = tagName(k);
     if (tag === "w:r") {
-      out += runText(k);
+      out += runText(k, opts);
     } else if (tag === "m:oMath") {
       const latex = oMathToLatex(k);
       if (latex) out += `\\(${latex}\\)`;
     } else if (tag === "m:oMathPara") {
+      // A display equation (Word's "Equation" on its own line). For prose it is
+      // emitted as display math on its own line, as Word shows it; the question
+      // importer keeps it inline so a stem stays one line.
       for (const om of findAll(children(k), "m:oMath")) {
         const latex = oMathToLatex(om);
-        if (latex) out += `\\(${latex}\\)`;
+        if (!latex) continue;
+        out += opts.keepLineBreaks ? `\n\\[${latex}\\]\n` : `\\(${latex}\\)`;
       }
     } else if (tag === "w:hyperlink" || tag === "w:smartTag") {
-      out += paragraphToLine(k);
+      out += paragraphToLine(k, opts);
     }
     // Anything else (bookmarks, proofErr, revision marks, paragraph/run
     // properties) carries no content relevant to bulk import — skipped.
   }
-  return out.replace(/[ \t]+/g, " ").trim();
+  out = out.replace(/[ \t]+/g, " ");
+  // Tidy spaces around line breaks and cap runs of blank lines at one.
+  if (opts.keepLineBreaks) out = out.replace(/ ?\n ?/g, "\n").replace(/\n{3,}/g, "\n\n");
+  return out.trim();
 }
 
 export class WordImportError extends Error {}
@@ -331,7 +344,10 @@ export class WordImportError extends Error {}
 // non-empty paragraph — each a plain line with any equations already
 // converted to `\( ... \)` LaTeX. Feed the result to
 // parseImportWordLines() in schema.ts.
-export async function extractWordImportLines(file: File | Blob | ArrayBuffer): Promise<string[]> {
+export async function extractWordImportLines(
+  file: File | Blob | ArrayBuffer,
+  opts: WordExtractOptions = {},
+): Promise<string[]> {
   const buffer = file instanceof ArrayBuffer ? file : await file.arrayBuffer();
 
   let zip: JSZip;
@@ -367,13 +383,21 @@ export async function extractWordImportLines(file: File | Blob | ArrayBuffer): P
   for (const child of children(bodyNode)) {
     const tag = tagName(child);
     if (tag === "w:p") {
-      const line = paragraphToLine(child);
-      if (line) lines.push(line);
+      const line = paragraphToLine(child, opts);
+      // Prose keeps its empty paragraphs (they are the blank lines between
+      // paragraphs); the question importer drops them.
+      if (line || opts.keepLineBreaks) lines.push(line);
     } else if (tag === "m:oMathPara") {
       const parts = findAll(children(child), "m:oMath")
         .map(oMathToLatex)
         .filter(Boolean);
-      if (parts.length) lines.push(parts.map((p) => `\\(${p}\\)`).join(" "));
+      if (parts.length) {
+        lines.push(
+          opts.keepLineBreaks
+            ? parts.map((p) => `\\[${p}\\]`).join("\n")
+            : parts.map((p) => `\\(${p}\\)`).join(" "),
+        );
+      }
     }
     // w:tbl (tables) and w:sectPr are out of scope for v1.
   }
