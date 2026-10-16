@@ -265,6 +265,7 @@ export async function saveCaseStudy(
     });
     if (typeof result === "string" && result !== "OK") return { ok: false, error: result };
     revalidatePath("/questions");
+    revalidatePath("/case-studies");
     return { ok: true, groupId: draft.groupId, code: draft.code ?? "" };
   }
 
@@ -272,7 +273,24 @@ export async function saveCaseStudy(
   if (typeof result === "string" || !result) {
     return { ok: false, error: errorFrom(result, "Failed to save the case study.") };
   }
+  revalidatePath("/case-studies");
   return { ok: true, groupId: result.GroupId, code: result.Code };
+}
+
+export type DeleteCaseStudyResult = { ok: true } | { ok: false; error: string };
+
+// Mode 48 — soft delete. The SP refuses while any question is attached to the
+// case study (or an exam uses it) and says why; that message is passed through.
+export async function deleteCaseStudy(groupId: string): Promise<DeleteCaseStudyResult> {
+  try {
+    const result = await callTeacherService<string>(48, { GroupId: groupId });
+    if (typeof result === "string" && result !== "OK") return { ok: false, error: result };
+    revalidatePath("/case-studies");
+    revalidatePath("/questions");
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
 }
 
 export type CaseStudySearchResult =

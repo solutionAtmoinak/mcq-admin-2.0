@@ -5,6 +5,7 @@ import {
   MdOutlineDescription,
   MdOutlineFactCheck,
   MdOutlineInventory2,
+  MdOutlineMenuBook,
   MdOutlineFunctions,
   MdOutlineQuestionAnswer,
   MdOutlineBuild,
@@ -56,6 +57,13 @@ export const NAV_GROUPS: NavGroup[] = [
         label: "Question Tags",
         icon: MdOutlineSell,
         match: (p) => p === "/tags" || p.startsWith("/tags/"),
+      },
+      {
+        eventKey: "question-bank-case-studies",
+        href: "/case-studies",
+        label: "Case Studies",
+        icon: MdOutlineMenuBook,
+        match: (p) => p === "/case-studies",
       },
       {
         eventKey: "question-bank-lots",

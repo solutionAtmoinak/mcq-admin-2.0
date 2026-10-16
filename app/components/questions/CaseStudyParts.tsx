@@ -27,7 +27,7 @@ import { notify } from "@/app/lib/shared/toast";
 
 // Plain-text paragraphs keep their line breaks; HTML ones must not (the
 // markup already says where the breaks are).
-function paragraphClass(text: string): string {
+export function paragraphClass(text: string): string {
   return looksLikeHtmlText(text) ? "text-sm text-zinc-800" : "whitespace-pre-wrap text-sm text-zinc-800";
 }
 
@@ -331,14 +331,16 @@ function ExistingList({ onPick }: { onPick: (ref: CaseStudyRef) => void }) {
 // text or HTML, write LaTeX as \( ... \), or fill it from a Word file (its
 // Equation-tool maths is converted to \( ... \) LaTeX — text and equations
 // only, no images/audio/video).
-function CaseStudyForm({
+export function CaseStudyForm({
   initial,
   editing,
   onSaved,
+  saveLabel,
 }: {
   initial: CaseStudyRef | null;
   editing: boolean;
   onSaved: (ref: CaseStudyRef) => void;
+  saveLabel?: string;
 }) {
   const [title, setTitle] = useState(initial?.title ?? "");
   const [text, setText] = useState(initial?.text ?? "");
@@ -458,7 +460,7 @@ function CaseStudyForm({
 
       <div className="flex justify-end">
         <button type="button" className={primaryButtonClass} onClick={handleSave} disabled={saving || reading}>
-          {saving ? "Saving…" : editing ? "Save new version" : "Save & use"}
+          {saving ? "Saving…" : (saveLabel ?? (editing ? "Save new version" : "Save & use"))}
         </button>
       </div>
     </div>

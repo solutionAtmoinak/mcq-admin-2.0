@@ -51,6 +51,8 @@ Payload = keys the TS caller puts in `@json` (FranchiseId/UserId/IP are supplied
 | `/questions/new`, `/questions/[id]` (CaseStudyParts) | Load one case study + its questions | spMcqTeacherService | 36 | `getCaseStudy` (via `loadCaseStudy`) | `{"GroupId"}` |
 | `/questions/new`, `/questions/[id]` | Create case study | spMcqTeacherService | 37 | `saveCaseStudy` | `{"Title","ContextJson","SearchText"}` |
 | `/questions/new`, `/questions/[id]` | Edit case study → new QuestionGroupVersion | spMcqTeacherService | 38 | `saveCaseStudy` | `{"GroupId","Title","ContextJson","SearchText","ChangeNote"}` |
+| `/case-studies` | Case study list (also returns VersionNo, ExamCount, ModifiedOn); create/edit reuse Modes 37/38, view uses Mode 36 | spMcqTeacherService | 35 | `listCaseStudies` | `{"Q","Page","PageSize"}` |
+| `/case-studies` (CaseStudyRowActions) | Soft-delete a case study; 409 if a question is attached or a live exam uses it | spMcqTeacherService | 48 | `deleteCaseStudy` | `{"GroupId"}` |
 | `/questions/lots` | Paginated question-lot list | spMcqTeacherService | 39 | `listQuestionLotsPaged` | `{"Q","Page","PageSize"}` |
 | `/tags` | Tag dimension list with counts | spMcqTeacherService | 40 | `listTagDimensions` | `{"Q"}` |
 | `/tags/[id]` | One dimension with its tags | spMcqTeacherService | 41 | `getTagDimension` | `{"DimensionId"}` |

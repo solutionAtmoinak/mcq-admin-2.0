@@ -11,6 +11,7 @@ GO
 -- Mode 39 (paginated question-lot list) added after the case-study modes.
 -- Modes 40-44 (tag / tag-dimension list, detail, rename, create from key -> value pairs) added after that.
 -- Modes 45-47 (exam attempts report, its exam filter options, delete attempt) added after that.
+-- Mode 48 (delete a case study) added with the Case Studies page.
 -- Modes 35-38 (case studies / shared paragraphs) added later; Modes 7, 11, 13, 14
 -- and 30 also carry GroupId/GroupSeq/GroupVersionId.
 -- (Mode 33, the one-off TblMasterMCQ4Question bulk migration, was removed
@@ -45,7 +46,7 @@ DECLARE
     @NewQuestionId BIGINT, @NewVersionId BIGINT, @ContentHash CHAR(64), @CodeAttempts INT,
     @TagRowNo INT, @TagMaxRowNo INT, @TagKey NVARCHAR(200), @TagValue NVARCHAR(200),
     @DimensionId INT, @DimCode VARCHAR(50), @TagId BIGINT,
-    @NextVersionNo INT, @ChangeNote NVARCHAR(400),
+    @NextVersionNo INT, @ChangeNote NVARCHAR(400), @QuestionUse INT, @ExamUse INT,
     @ToStatus INT, @Comment NVARCHAR(MAX), @ExistingStatus INT, @ExistingVersionId BIGINT,
     @TemplateId BIGINT, @PaperId BIGINT, @MockTestId BIGINT,
     @PublishedStatus INT, @DraftStatus INT, @DraftStatus2 INT, @SecNegative DECIMAL(5,2),
@@ -2021,7 +2022,9 @@ END
 -- "PageSize": <int>}. Q is LIKE-matched against QuestionGroup.SearchText and
 -- Code. The wildcard characters in Q are neutralised with [ ] brackets and the LIKE
 -- has no ESCAPE clause (an ESCAPE '[' clause, as Modes 7/8 use, would break that). Returns {"Total", "Items": [{GroupId,
--- Code, Title, Preview (first 300 chars), QuestionCount, CreatedOn}]}.
+-- Code, Title, Preview (first 300 chars), QuestionCount, VersionNo, ExamCount
+-- (exams whose snapshot uses any version of it), CreatedOn, ModifiedOn}]}. Also feeds
+-- the Case Studies page.
 if(@Mode = 35)
 BEGIN
     SELECT @Page = Page, @PageSize = PageSize, @Q = Q
@@ -2041,8 +2044,19 @@ BEGIN
         SELECT
             CAST(g.GroupId AS VARCHAR(20)) AS GroupId, g.Code, g.Title, LEFT(g.SearchText, 300) AS Preview,
             (SELECT COUNT(*) FROM Question q WHERE q.GroupId = g.GroupId AND q.IsDeleted = 0) AS QuestionCount,
-            g.CreatedOn
+            ISNULL(gv.VersionNo, 1) AS VersionNo,
+            (
+                SELECT COUNT(DISTINCT u.MockTestId) FROM (
+                    SELECT tq.MockTestId, tq.GroupVersionId FROM TestQuestion tq WHERE tq.IsDeleted = 0
+                    UNION
+                    SELECT tp.MockTestId, tp.GroupVersionId FROM TestPool tp WHERE tp.IsDeleted = 0
+                ) u
+                JOIN QuestionGroupVersion v ON v.VersionId = u.GroupVersionId AND v.GroupId = g.GroupId
+                JOIN MockTest m ON m.MockTestId = u.MockTestId AND m.IsDeleted = 0
+            ) AS ExamCount,
+            g.CreatedOn, g.ModifiedOn
         FROM QuestionGroup g
+        LEFT JOIN QuestionGroupVersion gv ON gv.VersionId = g.CurrentVersionId
         WHERE g.IsDeleted = 0 AND g.FranchiseId = @FranchiseId
           AND (@QPattern IS NULL OR g.SearchText LIKE @QPattern OR g.Code LIKE @QPattern)
         ORDER BY g.CreatedOn DESC, g.GroupId DESC
@@ -2539,6 +2553,55 @@ BEGIN
         (SELECT @Total AS AnswersDeleted FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER) AS response
         FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER
     );
+    COMMIT RETURN;
+END
+
+-- Mode 48: Delete a case study (deleteCaseStudy) — soft delete (IsDeleted = 1;
+-- its versions are kept). @json: {"GroupId": <bigint>}. Refused (409) while it is
+-- still in use: any active question points at it (Question.GroupId), or an exam
+-- snapshot / pool entry references one of its versions (TestQuestion / TestPool
+-- .GroupVersionId of a live exam) — deleting would leave those without their
+-- paragraph. Detach / delete the questions first.
+if(@Mode = 48)
+BEGIN
+    SELECT @GroupId = GroupId FROM OPENJSON(@json) WITH (GroupId BIGINT)
+
+    IF NOT EXISTS (SELECT 1 FROM QuestionGroup WHERE GroupId = @GroupId AND IsDeleted = 0 AND FranchiseId = @FranchiseId)
+    BEGIN
+        SET @output = (SELECT 1 AS ID, 404 AS statuscode, 'Case study not found.' AS response FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER);
+        COMMIT RETURN;
+    END
+
+    SELECT @QuestionUse = COUNT(*) FROM Question WHERE GroupId = @GroupId AND IsDeleted = 0
+    IF @QuestionUse > 0
+    BEGIN
+        SET @output = (SELECT 1 AS ID, 409 AS statuscode,
+            'This case study cannot be deleted: ' + CAST(@QuestionUse AS VARCHAR(10)) + ' question' + CASE WHEN @QuestionUse = 1 THEN ' is' ELSE 's are' END + ' attached to it.' AS response
+            FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER);
+        COMMIT RETURN;
+    END
+
+    SELECT @ExamUse = COUNT(DISTINCT u.MockTestId)
+    FROM (
+        SELECT tq.MockTestId, tq.GroupVersionId FROM TestQuestion tq WHERE tq.IsDeleted = 0
+        UNION
+        SELECT tp.MockTestId, tp.GroupVersionId FROM TestPool tp WHERE tp.IsDeleted = 0
+    ) u
+    JOIN QuestionGroupVersion v ON v.VersionId = u.GroupVersionId AND v.GroupId = @GroupId
+    JOIN MockTest m ON m.MockTestId = u.MockTestId AND m.IsDeleted = 0
+    IF @ExamUse > 0
+    BEGIN
+        SET @output = (SELECT 1 AS ID, 409 AS statuscode,
+            'This case study cannot be deleted: it is used in ' + CAST(@ExamUse AS VARCHAR(10)) + ' exam' + CASE WHEN @ExamUse = 1 THEN '' ELSE 's' END + '.' AS response
+            FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER);
+        COMMIT RETURN;
+    END
+
+    UPDATE dbo.QuestionGroup
+    SET IsDeleted = 1, ModifiedBy = @UserId, ModifiedIp = @IP, ModifiedOn = GETDATE()
+    WHERE GroupId = @GroupId
+
+    SET @output = (SELECT 1 AS ID, 200 AS statuscode, 'OK' AS response FOR JSON PATH, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER);
     COMMIT RETURN;
 END
 

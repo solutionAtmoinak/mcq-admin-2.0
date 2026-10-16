@@ -29,15 +29,26 @@ DECLARE
 @CurAnswerJson NVARCHAR(MAX), @CurSearchText NVARCHAR(MAX), @CurTagsJson NVARCHAR(MAX),
 @NewQuestionId BIGINT, @NewVersionId BIGINT, @ContentHash CHAR(64), @CodeAttempts INT,
 @TagRowNo INT, @TagMaxRowNo INT, @TagKey NVARCHAR(200), @TagValue NVARCHAR(200),
-@DimensionId INT, @DimCode VARCHAR(50), @TagId BIGINT, @ApprovedStatus INT;
+@DimensionId INT, @DimCode VARCHAR(50), @TagId BIGINT, @ApprovedStatus INT,
+-- Case-study (shared paragraph) migration support — see Mode 1/Mode 2.
+@CurCaseStudyJson NVARCHAR(MAX), @CurCaseStudyKey VARCHAR(50), @CurCaseStudyTitle NVARCHAR(300),
+@CurCaseStudyText NVARCHAR(MAX), @CurCaseStudyMediaJson NVARCHAR(MAX),
+@GroupContextJson NVARCHAR(MAX), @GroupSearchText NVARCHAR(4000), @GroupCode VARCHAR(50),
+@CurGroupId BIGINT, @CurGroupSeq INT;
 
 -- T-SQL does not allow a TABLE variable declaration inside the same
 -- comma-separated DECLARE list as scalar variables — each one needs its
 -- own standalone DECLARE statement.
-DECLARE @QInput TABLE (RowNo INT IDENTITY(1,1), Code NVARCHAR(50), TypeCode VARCHAR(50), Difficulty TINYINT, Status INT, EstSolveSec SMALLINT, PresentationJson NVARCHAR(MAX), AnswerJson NVARCHAR(MAX), SearchText NVARCHAR(MAX), TagsJson NVARCHAR(MAX));
+DECLARE @QInput TABLE (RowNo INT IDENTITY(1,1), Code NVARCHAR(50), TypeCode VARCHAR(50), Difficulty TINYINT, Status INT, EstSolveSec SMALLINT, PresentationJson NVARCHAR(MAX), AnswerJson NVARCHAR(MAX), SearchText NVARCHAR(MAX), TagsJson NVARCHAR(MAX), CaseStudyJson NVARCHAR(MAX));
 DECLARE @TagInput TABLE (RowNo INT IDENTITY(1,1), TagKey NVARCHAR(200), TagValue NVARCHAR(200));
 DECLARE @CreatedOutput TABLE (Code VARCHAR(50), QuestionId BIGINT);
 DECLARE @NewId TABLE (Id BIGINT);
+-- Case-study find-or-create is scoped to ONE Mode 2 call (see Mode 2's
+-- comment on why a second, separate call for the same legacy passage isn't
+-- detected): the first row carrying a given CaseStudyJson.key creates the
+-- QuestionGroup and records it here; every later row with the same key
+-- reuses GroupId and gets the next GroupSeq.
+DECLARE @GroupLookup TABLE (CaseStudyKey VARCHAR(50) PRIMARY KEY, GroupId BIGINT, NextSeq INT);
 
 BEGIN
    
@@ -65,6 +76,18 @@ BEGIN
 -- just MCQQuestionId, no joins) to get the full id list, then calls this
 -- mode once per page-sized chunk of ids, so each call only has to build
 -- JSON for a page's worth of rows.
+--
+-- Case studies (shared passage + several questions): a question's own stem
+-- is now JUST its MCQQuestion text — the legacy passage is no longer glued
+-- onto it. Instead, every row for a passage-linked question also carries
+-- CaseStudyKey (= MCQPassageId as text, null when no passage) and
+-- CaseStudyJson (= {"key","title","text","media"}, same on every row that
+-- shares a passage — title is auto-derived from the passage text, same
+-- ~60-char convention defaultCaseStudyTitle() uses for Word imports with no
+-- title of their own; media is the passage's own DocumentId, resolved via
+-- GetDocumentPath, since dbo.QuestionGroupVersion.ContextJson already has a
+-- media slot at the group level — see Mode 2 for where these get turned
+-- into an actual QuestionGroup).
 if(@Mode = 1)
 BEGIN
     SELECT @SectionId = SectionId FROM OPENJSON(@json) WITH (SectionId INT)
@@ -121,13 +144,15 @@ BEGIN
           AND (@QuestionIdsJson IS NULL OR q.MCQQuestionId IN (SELECT TRY_CAST([value] AS BIGINT) FROM OPENJSON(@QuestionIdsJson)))
     ),
     Stem AS (
+        -- No longer folds the passage into the stem (see Mode 1's header) —
+        -- the passage becomes a shared case-study paragraph instead (below),
+        -- and EffectiveMediaDocId no longer falls back to the passage's own
+        -- DocumentId either, since that now becomes the case study's group-
+        -- level media instead of the question's own.
         SELECT
             MCQQuestionId,
-            CASE WHEN MCQPassageId IS NOT NULL
-                 THEN PassageDetails + N'<br/><br/>' + MCQQuestion
-                 ELSE MCQQuestion
-            END AS StemHtml,
-            COALESCE(DocumentId, PassageDocumentId) AS EffectiveMediaDocId
+            MCQQuestion AS StemHtml,
+            DocumentId AS EffectiveMediaDocId
         FROM BaseQ
     ),
     Opt AS (
@@ -263,7 +288,30 @@ BEGIN
                     , CHAR(13), ' '), CHAR(10), ' '), CHAR(9), ' ')
                 , ' ') WHERE value <> ''),
             3800) AS SearchText,
-            ISNULL(tj.TagsArrayJson, N'[]') AS TagsJson
+            ISNULL(tj.TagsArrayJson, N'[]') AS TagsJson,
+            CAST(q.MCQPassageId AS VARCHAR(20)) AS CaseStudyKey,
+            -- NULL for non-passage questions (CASE with no ELSE). Identical
+            -- on every row sharing the same MCQPassageId — Mode 2's
+            -- find-or-create collapses them back onto one QuestionGroup.
+            CASE WHEN q.MCQPassageId IS NOT NULL THEN (
+                SELECT
+                    CAST(q.MCQPassageId AS VARCHAR(20)) AS [key],
+                    LEFT(
+                        (SELECT STRING_AGG(value, ' ') FROM STRING_SPLIT(
+                            REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+                                q.PassageDetails
+                            , N'<br>', N' '), N'<br/>', N' '), N'<br />', N' '), N'</p>', N' '), N'<p>', N''), N'</li>', N' '), N'<li>', N''), N'&nbsp;', N' ')
+                        , ' ') WHERE value <> ''),
+                    60) AS title,
+                    q.PassageDetails AS [text],
+                    JSON_QUERY(CASE WHEN q.PassageDocumentId IS NOT NULL THEN (
+                        SELECT CAST(q.PassageDocumentId AS VARCHAR(20)) AS id,
+                               DBDthLmsPro.dbo.GetDocumentPath(q.PassageDocumentId) AS url,
+                               'image' AS kind
+                        FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
+                    ) END) AS media
+                FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
+            ) END AS CaseStudyJson
         FROM BaseQ q
         JOIN Stem s ON s.MCQQuestionId = q.MCQQuestionId
         LEFT JOIN OptionsJson oj ON oj.MCQQuestionId = q.MCQQuestionId
@@ -290,6 +338,21 @@ END
 -- (TagDimension/Tag matched by exact Name, scoped by FranchiseId) reuses the
 -- same TagId whenever a value repeats across the whole call, so hundreds of
 -- questions sharing a Chapter tag correctly collapse onto one Tag row.
+--
+-- Each question in Questions[] may also carry CaseStudyJson (Mode 1's own
+-- output shape: {"key","title","text","media"}) when it came from a legacy
+-- passage. The FIRST row seen for a given key creates the QuestionGroup +
+-- its VersionNo 1 (mirroring spMcqTeacherService's Mode 37 — Code
+-- auto-generated CS-yyyyMMdd-XXXXXXXX, Title from the row's title, ContextJson
+-- = {title, text, media}); every later row with the same key just links to
+-- it (Question.GroupId/GroupSeq, mirroring how Mode 13 links to an existing
+-- group) with the next GroupSeq. This lookup is scoped to @GroupLookup, i.e.
+-- to THIS call only — there is no legacy-key column on QuestionGroup for a
+-- later, separate Mode 2 call to find it by, so all of one passage's
+-- sibling questions must arrive in the same call (the admin UI's
+-- MigratePanel already sends the whole uploaded file in one call, so this
+-- holds for the normal flow — just don't split one passage's questions
+-- across two separate uploads/imports).
 if(@Mode = 2)
 BEGIN
     SELECT @LotIdText = LotId FROM OPENJSON(@json) WITH (LotId NVARCHAR(50))
@@ -306,13 +369,13 @@ BEGIN
     IF @QuestionsJson IS NOT NULL AND ISJSON(@QuestionsJson) = 0 SET @QuestionsJson = NULL
 
     DELETE FROM @QInput
-    INSERT INTO @QInput (Code, TypeCode, Difficulty, Status, EstSolveSec, PresentationJson, AnswerJson, SearchText, TagsJson)
-    SELECT Code, TypeCode, Difficulty, Status, EstSolveSec, PresentationJson, AnswerJson, SearchText, COALESCE(Tags, TagsStr)
+    INSERT INTO @QInput (Code, TypeCode, Difficulty, Status, EstSolveSec, PresentationJson, AnswerJson, SearchText, TagsJson, CaseStudyJson)
+    SELECT Code, TypeCode, Difficulty, Status, EstSolveSec, PresentationJson, AnswerJson, SearchText, COALESCE(Tags, TagsStr), CaseStudyJson
     FROM OPENJSON(@QuestionsJson)
     WITH (
         Code NVARCHAR(50), TypeCode VARCHAR(50), Difficulty TINYINT, Status INT, EstSolveSec SMALLINT,
         PresentationJson NVARCHAR(MAX), AnswerJson NVARCHAR(MAX), SearchText NVARCHAR(MAX),
-        Tags NVARCHAR(MAX) AS JSON, TagsStr NVARCHAR(MAX) '$.Tags'
+        Tags NVARCHAR(MAX) AS JSON, TagsStr NVARCHAR(MAX) '$.Tags', CaseStudyJson NVARCHAR(MAX)
     )
 
     SELECT @Total = COUNT(*) FROM @QInput
@@ -346,7 +409,7 @@ BEGIN
         SELECT
             @CurCode = Code, @CurTypeCode = TypeCode, @CurDifficulty = Difficulty, @CurStatus = Status,
             @CurEstSolveSec = EstSolveSec, @CurPresentationJson = PresentationJson, @CurAnswerJson = AnswerJson,
-            @CurSearchText = SearchText, @CurTagsJson = TagsJson
+            @CurSearchText = SearchText, @CurTagsJson = TagsJson, @CurCaseStudyJson = CaseStudyJson
         FROM @QInput WHERE RowNo = @RowNo
 
         SELECT @CurTypeId = QuestionTypeId FROM QuestionType WHERE Code = @CurTypeCode AND IsDeleted = 0
@@ -363,15 +426,73 @@ BEGIN
             END
         END
 
+        -- Case study find-or-create — see Mode 2's header for the scoping
+        -- caveat (one call only, via @GroupLookup).
+        SET @CurGroupId = NULL
+        SET @CurGroupSeq = NULL
+        IF @CurCaseStudyJson IS NOT NULL
+        BEGIN
+            SELECT @CurCaseStudyKey = [key], @CurCaseStudyTitle = title, @CurCaseStudyText = [text], @CurCaseStudyMediaJson = media
+            FROM OPENJSON(@CurCaseStudyJson)
+            WITH ([key] VARCHAR(50), title NVARCHAR(300), [text] NVARCHAR(MAX), media NVARCHAR(MAX) '$.media' AS JSON)
+
+            IF @CurCaseStudyKey IS NOT NULL
+            BEGIN
+                SELECT @CurGroupId = GroupId FROM @GroupLookup WHERE CaseStudyKey = @CurCaseStudyKey
+
+                IF @CurGroupId IS NULL
+                BEGIN
+                    SET @CodeAttempts = 0
+                    WHILE 1 = 1
+                    BEGIN
+                        SET @GroupCode = 'CS-' + FORMAT(GETDATE(), 'yyyyMMdd') + '-' + UPPER(CONVERT(VARCHAR(8), CRYPT_GEN_RANDOM(4), 2))
+                        IF NOT EXISTS (SELECT 1 FROM QuestionGroup WHERE Code = @GroupCode) BREAK
+                        SET @CodeAttempts += 1
+                        IF @CodeAttempts > 5 BREAK
+                    END
+
+                    SET @GroupContextJson = (
+                        SELECT @CurCaseStudyTitle AS title, @CurCaseStudyText AS [text], JSON_QUERY(@CurCaseStudyMediaJson) AS media
+                        FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
+                    )
+                    SET @GroupSearchText = LEFT(
+                        (SELECT STRING_AGG(value, ' ') FROM STRING_SPLIT(
+                            REPLACE(REPLACE(ISNULL(@CurCaseStudyTitle, '') + ' ' + ISNULL(@CurCaseStudyText, '')
+                            , CHAR(13), ' '), CHAR(10), ' ')
+                        , ' ') WHERE value <> ''),
+                    3800)
+
+                    DELETE FROM @NewId
+                    INSERT INTO dbo.QuestionGroup (Code, Title, SearchText, CreatedBy, CreatedIp, FranchiseId)
+                    OUTPUT INSERTED.GroupId INTO @NewId
+                    VALUES (@GroupCode, NULLIF(LTRIM(RTRIM(@CurCaseStudyTitle)), ''), @GroupSearchText, @UserId, @IP, @FranchiseId)
+                    SELECT @CurGroupId = Id FROM @NewId
+
+                    DELETE FROM @NewId
+                    INSERT INTO dbo.QuestionGroupVersion (GroupId, VersionNo, ContextJson, ChangeNote, CreatedBy, CreatedIp, FranchiseId)
+                    OUTPUT INSERTED.VersionId INTO @NewId
+                    VALUES (@CurGroupId, 1, @GroupContextJson, 'Migrated from legacy passage', @UserId, @IP, @FranchiseId)
+                    SELECT @NewVersionId = Id FROM @NewId
+
+                    UPDATE dbo.QuestionGroup SET CurrentVersionId = @NewVersionId, ModifiedBy = @UserId, ModifiedIp = @IP, ModifiedOn = GETDATE() WHERE GroupId = @CurGroupId
+
+                    INSERT INTO @GroupLookup (CaseStudyKey, GroupId, NextSeq) VALUES (@CurCaseStudyKey, @CurGroupId, 1)
+                END
+
+                SELECT @CurGroupSeq = NextSeq FROM @GroupLookup WHERE CaseStudyKey = @CurCaseStudyKey
+                UPDATE @GroupLookup SET NextSeq = NextSeq + 1 WHERE CaseStudyKey = @CurCaseStudyKey
+            END
+        END
+
         DELETE FROM @NewId
         IF @CurStatus = @ApprovedStatus
-            INSERT INTO dbo.Question (Code, QuestionTypeId, Difficulty, Status, EstSolveSec, LotId, ApprovedBy, ApprovedOn, CreatedBy, CreatedIp, FranchiseId)
+            INSERT INTO dbo.Question (Code, QuestionTypeId, Difficulty, Status, EstSolveSec, LotId, GroupId, GroupSeq, ApprovedBy, ApprovedOn, CreatedBy, CreatedIp, FranchiseId)
             OUTPUT INSERTED.QuestionId INTO @NewId
-            VALUES (@CurCode, @CurTypeId, @CurDifficulty, @CurStatus, @CurEstSolveSec, @LotId, @UserId, GETDATE(), @UserId, @IP, @FranchiseId)
+            VALUES (@CurCode, @CurTypeId, @CurDifficulty, @CurStatus, @CurEstSolveSec, @LotId, @CurGroupId, @CurGroupSeq, @UserId, GETDATE(), @UserId, @IP, @FranchiseId)
         ELSE
-            INSERT INTO dbo.Question (Code, QuestionTypeId, Difficulty, Status, EstSolveSec, LotId, CreatedBy, CreatedIp, FranchiseId)
+            INSERT INTO dbo.Question (Code, QuestionTypeId, Difficulty, Status, EstSolveSec, LotId, GroupId, GroupSeq, CreatedBy, CreatedIp, FranchiseId)
             OUTPUT INSERTED.QuestionId INTO @NewId
-            VALUES (@CurCode, @CurTypeId, @CurDifficulty, @CurStatus, @CurEstSolveSec, @LotId, @UserId, @IP, @FranchiseId)
+            VALUES (@CurCode, @CurTypeId, @CurDifficulty, @CurStatus, @CurEstSolveSec, @LotId, @CurGroupId, @CurGroupSeq, @UserId, @IP, @FranchiseId)
         SELECT @NewQuestionId = Id FROM @NewId
 
         SET @ContentHash = LOWER(CONVERT(CHAR(64), HASHBYTES('SHA2_256', @CurPresentationJson + '|' + @CurAnswerJson), 2))
@@ -440,6 +561,12 @@ BEGIN
     COMMIT RETURN;
 END
 
+-- Mode 3: Cheap id-only lookup for one legacy section (listSectionQuestionIds).
+-- @json: {"SectionId": <int>}. Read-only. No joins across passage/option/
+-- answer/tag tables — just MCQQuestionId — so it never times out even for a
+-- section with 1000+ questions. Same franchise permission check as Mode 1.
+-- The admin UI's ExtractPanel calls this first to get the full id list and
+-- total count, then pages through them via Mode 1's QuestionIds filter.
 if(@Mode = 3)
 begin
     SELECT @SectionId = SectionId FROM OPENJSON(@json) WITH (SectionId INT)

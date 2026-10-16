@@ -244,3 +244,124 @@ html[data-theme="dark"]
 .nav-brand-in {
   animation: nav-brand-in 250ms ease-out 200ms both;
 }
+
+/* ---- Raw HTML fragments (MathText's legacy-HTML branch) ----------------------
+   Question / case-study content migrated from the legacy project is plain
+   HTML that expects the browser's own default rendering — `<table border="1"
+   cellpadding="4">`, bullets on lists, sized headings. Tailwind's preflight
+   (`@layer base`) wipes all of that, so inside `.raw-html` the browser
+   defaults are put back, property by property. Unlayered rules beat any
+   layer, and every selector sits in `:where()` (specificity 0) so the
+   fragment's own inline styles and <style> blocks still win over this.
+   `all: revert` is deliberately NOT used: it also throws away HTML
+   presentational attributes (`border=`, `cellpadding=`, `<font color>`) that
+   the browser applies itself, which is exactly what we want to keep.
+   MathJax's own output (mjx-container) is skipped — its CSS is written
+   against the preflight baseline. Everything else in the app keeps preflight. */
+:where(.raw-html *:not(mjx-container, mjx-container *)) {
+  box-sizing: revert;
+  margin: revert;
+  list-style: revert;
+}
+
+/* Borders/padding: the table family is handled below, because its border and
+   padding come from `border=` / `cellpadding=` attributes, which preflight's
+   `border: 0` / `padding: 0` override and which `revert` cannot bring back. */
+:where(.raw-html *:not(mjx-container, mjx-container *, table, thead, tbody, tfoot, tr, td, th)) {
+  border: revert;
+}
+
+:where(.raw-html *:not(mjx-container, mjx-container *, td, th)) {
+  padding: revert;
+}
+
+:where(.raw-html :is(table, thead, tbody, tfoot, tr, td, th)) {
+  border: revert;
+}
+
+:where(.raw-html table) {
+  border-collapse: revert;
+  text-indent: revert;
+  --raw-cell-padding: 1px;
+}
+
+:where(.raw-html table[border]:not([border="0"])) {
+  border-width: 1px;
+  border-style: outset;
+}
+
+:where(.raw-html table[border="2"]) { border-width: 2px; }
+:where(.raw-html table[border="3"]) { border-width: 3px; }
+
+:where(.raw-html table[border]:not([border="0"]) > :is(thead, tbody, tfoot) > tr > :is(td, th)) {
+  border-width: 1px;
+  border-style: inset;
+}
+
+:where(.raw-html table[cellpadding="0"]) { --raw-cell-padding: 0px; }
+:where(.raw-html table[cellpadding="1"]) { --raw-cell-padding: 1px; }
+:where(.raw-html table[cellpadding="2"]) { --raw-cell-padding: 2px; }
+:where(.raw-html table[cellpadding="3"]) { --raw-cell-padding: 3px; }
+:where(.raw-html table[cellpadding="4"]) { --raw-cell-padding: 4px; }
+:where(.raw-html table[cellpadding="5"]) { --raw-cell-padding: 5px; }
+:where(.raw-html table[cellpadding="6"]) { --raw-cell-padding: 6px; }
+:where(.raw-html table[cellpadding="7"]) { --raw-cell-padding: 7px; }
+:where(.raw-html table[cellpadding="8"]) { --raw-cell-padding: 8px; }
+:where(.raw-html table[cellpadding="9"]) { --raw-cell-padding: 9px; }
+:where(.raw-html table[cellpadding="10"]) { --raw-cell-padding: 10px; }
+
+:where(.raw-html table > :is(thead, tbody, tfoot) > tr > :is(td, th)) {
+  padding: var(--raw-cell-padding);
+}
+
+:where(.raw-html :is(h1, h2, h3, h4, h5, h6)) {
+  font-size: revert;
+  font-weight: revert;
+}
+
+:where(.raw-html a) {
+  color: revert;
+  text-decoration: revert;
+}
+
+:where(.raw-html :is(b, strong)) {
+  font-weight: revert;
+}
+
+:where(.raw-html :is(code, kbd, samp, pre)) {
+  font-family: revert;
+  font-size: revert;
+}
+
+:where(.raw-html small) {
+  font-size: revert;
+}
+
+:where(.raw-html :is(sub, sup)) {
+  font-size: revert;
+  line-height: revert;
+  position: revert;
+  vertical-align: revert;
+  top: revert;
+  bottom: revert;
+}
+
+:where(.raw-html hr) {
+  height: revert;
+  color: revert;
+}
+
+:where(.raw-html :is(img, svg, video, canvas, audio, iframe, embed, object):not(mjx-container *)) {
+  display: revert;
+  vertical-align: revert;
+}
+
+:where(.raw-html :is(button, input, select, optgroup, textarea)) {
+  font: revert;
+  letter-spacing: revert;
+  color: revert;
+  border-radius: revert;
+  background-color: revert;
+  opacity: revert;
+  appearance: revert;
+}

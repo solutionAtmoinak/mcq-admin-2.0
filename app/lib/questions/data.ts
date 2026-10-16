@@ -378,7 +378,11 @@ export type CaseStudyListItem = {
   title: string | null;
   preview: string;
   questionCount: number;
+  versionNo: number;
+  // Exams whose snapshot uses any version of it — a case study in use can't be deleted.
+  examCount: number;
   createdOn: string;
+  modifiedOn: string | null;
 };
 
 type RawCaseStudyListItem = {
@@ -387,7 +391,10 @@ type RawCaseStudyListItem = {
   Title: string | null;
   Preview: string | null;
   QuestionCount: number;
+  VersionNo: number | null;
+  ExamCount: number | null;
   CreatedOn: string;
+  ModifiedOn: string | null;
 };
 
 type RawCaseStudyListResult = { Total: number; Items: RawCaseStudyListItem[] | null };
@@ -413,7 +420,10 @@ export async function listCaseStudies(
       title: c.Title,
       preview: previewWithoutTitle(c.Preview, c.Title),
       questionCount: c.QuestionCount,
+      versionNo: c.VersionNo ?? 1,
+      examCount: c.ExamCount ?? 0,
       createdOn: c.CreatedOn,
+      modifiedOn: c.ModifiedOn,
     })),
     total: result.Total ?? 0,
   };

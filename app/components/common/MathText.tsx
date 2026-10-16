@@ -46,7 +46,11 @@ function HtmlFragment({
   // Call sites style their box for plain text — typically
   // `whitespace-pre-line`, to keep authored line breaks — and that would
   // otherwise turn every newline in the HTML source into a visible break.
-  const classes = className ? `${className} whitespace-normal` : "whitespace-normal";
+  // `raw-html` (globals.css) hands the fragment back to the browser's own
+  // default rendering instead of Tailwind's preflight reset.
+  const classes = className
+    ? `${className} whitespace-normal raw-html`
+    : "whitespace-normal raw-html";
   return <Tag className={classes} dangerouslySetInnerHTML={{ __html: html }} />;
 }
 

@@ -34,6 +34,7 @@ import { QUESTION_STATUS_BADGE } from "@/app/lib/questions/constants";
 import type { TodayQuestionItem } from "@/app/lib/questions/data";
 import {
   IMPORT_EXCEL_EXAMPLE_ROWS,
+  IMPORT_JSON_CASE_STUDY_EXAMPLE,
   IMPORT_JSON_EXAMPLE,
   QUESTION_TYPE_LABELS,
   emptyQuestion,
@@ -41,6 +42,7 @@ import {
   isSingleAnswerType,
   nextClientId,
   parseImportExcelRows,
+  parseImportCaseStudyJson,
   parseImportJson,
   parseImportWordLines,
   validateQuestion,
@@ -52,7 +54,7 @@ import {
   type TagPair,
 } from "@/app/lib/questions/schema";
 import { toLabelRecord, valueByLabel, type ServiceOption } from "@/app/lib/db/serviceOptions";
-import { notify } from "@/app/lib/shared/toast";
+import { notify, setNotifyPosition } from "@/app/lib/shared/toast";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -68,8 +70,10 @@ import {
 } from "react";
 import * as XLSX from "xlsx";
 import {
+  FiAlertTriangle,
   FiCheck,
   FiCopy,
+  FiBookOpen,
   FiCpu,
   FiEdit2,
   FiFileText,
@@ -111,6 +115,53 @@ type Defaults = {
 
 function makeRow(overrides: Partial<QuestionInput> = {}): Row {
   return { clientId: nextClientId(), data: emptyQuestion(overrides), saved: null };
+}
+
+function downloadTextFile(filename: string, content: string, type = "application/json") {
+  const blob = new Blob([content], { type });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// Dedups by key+value (trimmed) across every row's tags, preserving first-
+// seen order — used to prefill Batch Default Settings with what an import
+// actually found, so a placeholder like a literal "CHAPTER_ID_HERE" tag
+// value is visible and fixable in one place before it's applied/saved.
+function collectUniqueTags(rowsIn: { data: QuestionInput }[]): TagPair[] {
+  const seen = new Map<string, TagPair>();
+  for (const r of rowsIn) {
+    for (const t of r.data.tags) {
+      const key = t.key.trim();
+      const value = t.value.trim();
+      if (!key && !value) continue;
+      const mapKey = `${key}\u0000${value}`;
+      if (!seen.has(mapKey)) seen.set(mapKey, { key, value });
+    }
+  }
+  return seen.size ? [...seen.values()] : [{ key: "", value: "" }];
+}
+
+// Most frequent value across imported rows, for prefilling a single
+// batch-wide difficulty/status/marks/negativeMarks pick — `undefined` only
+// when `values` is empty (caller falls back to the current default then).
+function mostCommonValue<T>(values: T[]): T | undefined {
+  if (values.length === 0) return undefined;
+  const counts = new Map<T, number>();
+  let best: T | undefined;
+  let bestCount = 0;
+  for (const v of values) {
+    const c = (counts.get(v) ?? 0) + 1;
+    counts.set(v, c);
+    if (c > bestCount) {
+      best = v;
+      bestCount = c;
+    }
+  }
+  return best;
 }
 
 function stemPreview(stem: string): string {
@@ -197,14 +248,24 @@ export default function QuestionBankEditor({
   const [caseDrawer, setCaseDrawer] = useState<{ clientId: string; mode: "pick" | "edit" } | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [defaultsOpen, setDefaultsOpen] = useState(false);
+  // Set right after a clean (warning-free) import to N new rows, so the
+  // auto-opened Batch Default Settings drawer can explain why it opened and
+  // what it was prefilled from. Cleared on close / manual open / apply.
+  const [importReviewCount, setImportReviewCount] = useState<number | null>(null);
   const questionStatusOptions: ServiceOption[] =
     referenceData.questionStatusOptions;
-  const [importText, setImportText] = useState("");
+  // Which import method the drawer shows — one at a time, instead of one long scrolling page.
+  const [importTab, setImportTab] = useState<ImportTab>("excel");
+
+  // Toasts on this page (own and from the drawers / pickers inside it) sit bottom-left.
+  useEffect(() => setNotifyPosition("bottom-left"), []);
   const [importOpen, setImportOpen] = useState(false);
   const [importWarnings, setImportWarnings] = useState<string[]>([]);
   const [importError, setImportError] = useState<string | null>(null);
   const excelInputRef = useRef<HTMLInputElement>(null);
   const wordInputRef = useRef<HTMLInputElement>(null);
+  const jsonInputRef = useRef<HTMLInputElement>(null);
+  const caseJsonInputRef = useRef<HTMLInputElement>(null);
   const [isParsingWord, setIsParsingWord] = useState(false);
   const [isPending, startTransition] = useTransition();
 
@@ -499,6 +560,7 @@ export default function QuestionBankEditor({
     setRows((prev) => prev.map((r) => ({ ...r, data: { ...r.data, ...defaultOverrides() } })));
     notify(`Applied defaults to ${rows.length} question${rows.length === 1 ? "" : "s"}.`, "success");
     setDefaultsOpen(false);
+    setImportReviewCount(null);
   }
 
   // Closes the drawer and confirms via toast once an import comes through
@@ -517,6 +579,14 @@ export default function QuestionBankEditor({
   // (Word "CaseStudy:" block / JSON "caseStudy") carries that paragraph as an
   // unsaved CaseStudyRef; it is saved when its question is. Adds to what is
   // already on the page, same as before (see mergeImportedRows).
+  //
+  // Also prefills Batch Default Settings from what was just imported — every
+  // unique tag key/value pair found (so a placeholder like a literal
+  // "CHAPTER_ID_HERE" tag value is right there to fix), plus the most common
+  // difficulty/status/marks/negative marks — and, once there are no warnings
+  // to review first, opens that drawer so the user can fix anything before
+  // applying it. Same for all four import methods (Excel/Word/JSON/case
+  // study JSON), since they all funnel through this one function.
   function applyImportResult(result: ImportResult): { rowCount: number; warnings: string[] } {
     const caseByKey = new Map((result.caseStudies ?? []).map((c) => [c.key, c]));
     const newRows: Row[] = result.rows.map((data, i) => {
@@ -531,18 +601,68 @@ export default function QuestionBankEditor({
       };
     });
     setRows((prev) => mergeImportedRows(prev, newRows));
+
+    if (newRows.length > 0) {
+      setDefaults((d) => ({
+        tags: collectUniqueTags(newRows),
+        difficulty: mostCommonValue(newRows.map((r) => r.data.difficulty)) ?? d.difficulty,
+        status: mostCommonValue(newRows.map((r) => r.data.status)) ?? d.status,
+        marks: mostCommonValue(newRows.map((r) => r.data.marks)) ?? d.marks,
+        negativeMarks: mostCommonValue(newRows.map((r) => r.data.negativeMarks)) ?? d.negativeMarks,
+        estSolveSec: mostCommonValue(newRows.map((r) => r.data.estSolveSec)) ?? d.estSolveSec,
+      }));
+      // Only auto-open when the import is otherwise clean — if there are
+      // warnings to review, finishBulkImport leaves the Bulk Import drawer
+      // open instead, and opening this one too would stack two drawers.
+      if (result.warnings.length === 0) {
+        setImportReviewCount(newRows.length);
+        setDefaultsOpen(true);
+      }
+    }
+
     return { rowCount: newRows.length, warnings: result.warnings };
   }
 
-  function handleParseImport() {
+  function triggerJsonUpload() {
+    jsonInputRef.current?.click();
+  }
+
+  async function handleJsonFile(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (jsonInputRef.current) jsonInputRef.current.value = "";
+    if (!file) return;
+
     setImportError(null);
     setImportWarnings([]);
     try {
-      const { rowCount, warnings } = applyImportResult(parseImportJson(importText, questionStatusOptions));
-      if (warnings.length === 0) setImportText("");
-      finishBulkImport(rowCount, warnings, "the AI assistant");
-    } catch (e) {
-      setImportError((e as Error).message);
+      const text = await file.text();
+      const { rowCount, warnings } = applyImportResult(parseImportJson(text, questionStatusOptions));
+      finishBulkImport(rowCount, warnings, "your JSON file");
+    } catch (err) {
+      setImportError((err as Error).message);
+    }
+  }
+
+  function triggerCaseJsonUpload() {
+    caseJsonInputRef.current?.click();
+  }
+
+  // Case-study JSON: { "CaseStudy", "CaseStudyTitle", "Questions": [...] } (or
+  // an array of those) — see parseImportCaseStudyJson. Kept apart from
+  // handleJsonFile so the normal JSON import is untouched.
+  async function handleCaseJsonFile(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (caseJsonInputRef.current) caseJsonInputRef.current.value = "";
+    if (!file) return;
+
+    setImportError(null);
+    setImportWarnings([]);
+    try {
+      const text = await file.text();
+      const { rowCount, warnings } = applyImportResult(parseImportCaseStudyJson(text, questionStatusOptions));
+      finishBulkImport(rowCount, warnings, "your case study JSON file");
+    } catch (err) {
+      setImportError((err as Error).message);
     }
   }
 
@@ -773,7 +893,13 @@ export default function QuestionBankEditor({
             <span className="text-xs font-semibold uppercase tracking-wide text-brand dark:text-brand-soft sm:mr-1">
               Batch tools
             </span>
-            <button className={buttonClass} onClick={() => setDefaultsOpen(true)}>
+            <button
+              className={buttonClass}
+              onClick={() => {
+                setImportReviewCount(null);
+                setDefaultsOpen(true);
+              }}
+            >
               Batch Default Settings
             </button>
             <button className={buttonClass} onClick={() => setImportOpen(true)}>
@@ -873,10 +999,11 @@ export default function QuestionBankEditor({
             {savedCount > 0 ? ` · ${savedCount} saved` : ""}
           </span>
           <button
-            className={primaryButtonClass}
+            className={`${primaryButtonClass} inline-flex items-center gap-1.5`}
             onClick={handleSaveAll}
             disabled={isPending || rows.length === savedCount}
           >
+            {isPending && <FiLoader className="animate-spin" size={14} />}
             {isPending ? "Saving…" : "Save All"}
           </button>
         </div>
@@ -924,11 +1051,24 @@ export default function QuestionBankEditor({
 
       <Drawer
         open={defaultsOpen}
-        onClose={() => setDefaultsOpen(false)}
+        onClose={() => {
+          setDefaultsOpen(false);
+          setImportReviewCount(null);
+        }}
         title="Batch Default Settings"
         widthClass="max-w-md"
       >
         <div className="flex flex-col gap-4">
+          {importReviewCount !== null && (
+            <div className="flex items-start gap-2 rounded-md border border-violet-300 bg-violet-50 p-3 text-sm text-violet-800">
+              <FiBookOpen size={16} className="mt-0.5 shrink-0" />
+              <p>
+                Found while importing {importReviewCount} question{importReviewCount === 1 ? "" : "s"}: every
+                unique tag (key/value) below, plus the most common difficulty/status/marks. Fix anything —
+                a placeholder tag value, the wrong status — then apply it.
+              </p>
+            </div>
+          )}
           <div>
             <label className={labelClass}>Lot number</label>
             <div className="flex items-center gap-2 rounded-md border border-zinc-200 bg-zinc-50 px-2.5 py-1.5">
@@ -1031,6 +1171,14 @@ export default function QuestionBankEditor({
               }
             />
           </div>
+          <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-2.5 text-xs text-amber-800">
+            <FiAlertTriangle size={14} className="mt-0.5 shrink-0" />
+            <p>
+              This overwrites tags, difficulty, status, marks and negative marks on all{" "}
+              <strong>{rows.length}</strong> question{rows.length === 1 ? "" : "s"} currently in this batch —
+              not just newly imported ones — before you save.
+            </p>
+          </div>
           <button className={primaryButtonClass} onClick={applyDefaultsToAll}>
             Apply to all rows
           </button>
@@ -1042,10 +1190,29 @@ export default function QuestionBankEditor({
         onClose={() => setImportOpen(false)}
         title="Bulk Import"
         subTitle='Max 100 Questions at a time'
-        widthClass="max-w-xl"
+        widthClass="max-w-3xl"
       >
-        <div className="flex flex-col gap-5">
-          <div className={`flex flex-col gap-3 rounded-lg border ${IMPORT_SECTION_COLOR.emerald.bar} bg-white p-3`}>
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-wrap gap-2">
+            {IMPORT_TABS.map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                className={`${importTab === tab.id ? primaryButtonClass : buttonClass} inline-flex items-center gap-1.5`}
+                onClick={() => {
+                  setImportTab(tab.id);
+                  // Messages belong to the last import attempted, not to the tab being opened.
+                  setImportError(null);
+                  setImportWarnings([]);
+                }}
+              >
+                <tab.icon size={14} />
+                {tab.label}
+              </button>
+            ))}
+          </div>
+
+          <div className={`flex flex-col gap-3 rounded-lg border ${IMPORT_SECTION_COLOR.emerald.bar} bg-white p-3 ${importTab === "excel" ? "" : "hidden"}`}>
             <ImportSectionHeader
               icon={FiTable}
               color="emerald"
@@ -1090,7 +1257,7 @@ export default function QuestionBankEditor({
             />
           </div>
 
-          <div className={`flex flex-col gap-3 rounded-lg border ${IMPORT_SECTION_COLOR.blue.bar} bg-white p-3`}>
+          <div className={`flex flex-col gap-3 rounded-lg border ${IMPORT_SECTION_COLOR.blue.bar} bg-white p-3 ${importTab === "word" ? "" : "hidden"}`}>
             <ImportSectionHeader
               icon={FiFileText}
               color="blue"
@@ -1138,37 +1305,76 @@ export default function QuestionBankEditor({
             />
           </div>
 
-          <div className={`flex flex-col gap-3 rounded-lg border ${IMPORT_SECTION_COLOR.violet.bar} bg-white p-3`}>
+          <div className={`flex flex-col gap-3 rounded-lg border ${IMPORT_SECTION_COLOR.violet.bar} bg-white p-3 ${importTab === "json" ? "" : "hidden"}`}>
             <ImportSectionHeader
               icon={FiCpu}
               color="violet"
               title="From an AI Assistant"
-              description="Used ChatGPT, Claude or another AI tool to write your questions? Have it follow the example format below, then paste its answer here."
+              description="Used ChatGPT, Claude or another AI tool to write your questions? Have it follow the sample format below, save its answer as a .json file, then upload it here."
             />
             <ul className="flex flex-col gap-1.5 pl-1">
               <ImportStep label="1">
-                Click &ldquo;Show Example Format&rdquo; below and share it with your AI tool, asking
-                it to write your questions the same way.
+                Download the sample JSON below and share it with your AI tool, asking it to write your
+                questions the same way.
               </ImportStep>
-              <ImportStep label="2">Paste what it gives you into the box below.</ImportStep>
+              <ImportStep label="2">Save what it gives you as a .json file, then upload it below.</ImportStep>
             </ul>
             <p className="text-xs text-zinc-500">
               Any subject/chapter/topic labels you use are created automatically the first time.
             </p>
-            <textarea
-              className={`${inputClass} h-64 font-mono text-xs`}
-              placeholder={IMPORT_JSON_EXAMPLE}
-              value={importText}
-              onChange={(e) => setImportText(e.target.value)}
-            />
             <div className="flex flex-wrap gap-2">
-              <button className={buttonClass} onClick={() => setImportText(IMPORT_JSON_EXAMPLE)}>
-                Show Example Format
+              <button
+                className={buttonClass}
+                onClick={() => downloadTextFile("question-import-sample.json", IMPORT_JSON_EXAMPLE)}
+              >
+                Download Sample JSON
               </button>
-              <button className={primaryButtonClass} onClick={handleParseImport}>
-                Add These Questions
+              <button className={primaryButtonClass} onClick={triggerJsonUpload}>
+                Upload JSON File
               </button>
             </div>
+            <input ref={jsonInputRef} type="file" accept=".json,application/json" hidden onChange={handleJsonFile} />
+          </div>
+
+          <div className={`flex flex-col gap-3 rounded-lg border ${IMPORT_SECTION_COLOR.amber.bar} bg-white p-3 ${importTab === "case" ? "" : "hidden"}`}>
+            <ImportSectionHeader
+              icon={FiBookOpen}
+              color="amber"
+              title="From a Case Study JSON"
+              description="One case study and all the questions asked about it, as a single JSON object — or several case studies at once as an array of these objects. Every question becomes a Case Study question sharing its own case study's paragraph."
+            />
+            <ul className="flex flex-col gap-1.5 pl-1">
+              <ImportStep label="CaseStudy">The paragraph — plain text, HTML or LaTeX in \( \) / \[ \]. Required.</ImportStep>
+              <ImportStep label="CaseStudyTitle">
+                A short name you will find it by later. If left out, the start of the paragraph is used.
+              </ImportStep>
+              <ImportStep label="Questions">
+                The list of questions under it, each written exactly like in the JSON import above (type, stem,
+                options, correct, marks, tags, …). One correct option per question.
+              </ImportStep>
+              <ImportStep label="Multiple case studies">
+                Upload an array of these objects instead of one — <code>[{"{"} CaseStudy, CaseStudyTitle, Questions {"}"}, ...]</code> —
+                to add several case studies and their questions in one upload.
+              </ImportStep>
+            </ul>
+            <div className="flex flex-wrap gap-2">
+              <button
+                className={buttonClass}
+                onClick={() => downloadTextFile("case-study-import-sample.json", IMPORT_JSON_CASE_STUDY_EXAMPLE)}
+              >
+                Download Sample JSON
+              </button>
+              <button className={primaryButtonClass} onClick={triggerCaseJsonUpload}>
+                Upload JSON File
+              </button>
+            </div>
+            <input
+              ref={caseJsonInputRef}
+              type="file"
+              accept=".json,application/json"
+              hidden
+              onChange={handleCaseJsonFile}
+            />
           </div>
 
           {importError && <p className="text-sm text-red-600">{importError}</p>}
@@ -1185,10 +1391,20 @@ export default function QuestionBankEditor({
   );
 }
 
+type ImportTab = "excel" | "word" | "json" | "case";
+
+const IMPORT_TABS: { id: ImportTab; label: string; icon: ComponentType<{ size?: number }> }[] = [
+  { id: "excel", label: "Excel", icon: FiTable },
+  { id: "word", label: "Word", icon: FiFileText },
+  { id: "json", label: "JSON", icon: FiCpu },
+  { id: "case", label: "Case Study JSON", icon: FiBookOpen },
+];
+
 const IMPORT_SECTION_COLOR = {
   emerald: { badge: "bg-emerald-100 text-emerald-700", bar: "border-emerald-200" },
   blue: { badge: "bg-blue-100 text-blue-700", bar: "border-blue-200" },
   violet: { badge: "bg-violet-100 text-violet-700", bar: "border-violet-200" },
+  amber: { badge: "bg-amber-100 text-amber-700", bar: "border-amber-200" },
 } as const;
 
 // Section header for one bulk-import method in the drawer below — an icon,

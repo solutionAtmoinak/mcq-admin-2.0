@@ -7,6 +7,7 @@ import { JsonView, allExpanded, darkStyles } from "react-json-view-lite";
 import "react-json-view-lite/dist/index.css";
 import {
   FiAlertTriangle,
+  FiBookOpen,
   FiCheckCircle,
   FiCopy,
   FiEye,
@@ -48,6 +49,18 @@ type RawRow = {
   AnswerJson: unknown;
   SearchText: string;
   TagsJson?: unknown;
+  // Mode 1's case-study marker for a passage-linked question (null/absent
+  // for an ordinary question) — see spMcqMigrationService-deploy.sql's
+  // Mode 1/Mode 2 headers. {"key","title","text","media"}; every row that
+  // shares a legacy passage carries the same "key".
+  CaseStudyJson?: unknown;
+};
+
+type ParsedCaseStudy = {
+  key: string;
+  title?: string;
+  text?: string;
+  media?: unknown;
 };
 
 type ParsedPresentation = {
@@ -71,6 +84,7 @@ type ParsedRow = {
   presentation: ParsedPresentation | null;
   answer: ParsedAnswer | null;
   tags: { Key: string; Value: string }[];
+  caseStudy: ParsedCaseStudy | null;
   warnings: string[];
 };
 
@@ -114,13 +128,19 @@ function parseRow(raw: RawRow, index: number): ParsedRow {
     else warnings.push("TagsJson is not valid JSON.");
   }
 
+  let caseStudy: ParsedCaseStudy | null = null;
+  if (raw.CaseStudyJson != null) {
+    caseStudy = parseMaybeJson<ParsedCaseStudy>(raw.CaseStudyJson);
+    if (!caseStudy) warnings.push("CaseStudyJson is not valid JSON.");
+  }
+
   if (!presentation?.stem?.trim()) warnings.push("Missing stem.");
   if (isOptionBasedType(raw.TypeCode) && (presentation?.options?.length ?? 0) < 2) {
     warnings.push("Fewer than 2 options.");
   }
   if (answer && hasEmptyCorrect(answer.correct)) warnings.push("No correct answer set.");
 
-  return { index, raw, presentation, answer, tags, warnings };
+  return { index, raw, presentation, answer, tags, caseStudy, warnings };
 }
 
 // Dedicated "View" column button — opens the row's FULL raw JSON
@@ -156,6 +176,7 @@ function ViewJsonButton({ r }: { r: ParsedRow }) {
                 Presentation: r.presentation,
                 Answer: r.answer,
                 Tags: r.tags,
+                CaseStudy: r.caseStudy,
                 SearchText: r.raw.SearchText,
               }}
               style={darkStyles}
@@ -203,6 +224,35 @@ function WarningTrigger({ warnings }: { warnings: string[] }) {
   );
 }
 
+// Click-triggered popover identifying this row as part of a case study
+// (shared legacy passage) — shows the auto-derived title/paragraph so it's
+// clear what group this question will be linked to on import, same
+// click-to-open pattern as WarningTrigger.
+function CaseStudyTrigger({ caseStudy }: { caseStudy: ParsedCaseStudy }) {
+  return (
+    <Whisper
+      placement="left"
+      trigger="click"
+      speaker={
+        <Popover title="Case study">
+          <p className="max-w-xs text-xs font-medium text-zinc-800">{caseStudy.title || "(untitled)"}</p>
+          {caseStudy.text && (
+            <p className="mt-1 max-w-xs text-xs text-zinc-600">{toPlainText(caseStudy.text).slice(0, 200)}</p>
+          )}
+        </Popover>
+      }
+    >
+      <button
+        type="button"
+        className="inline-flex items-center justify-center text-violet-500 hover:text-violet-600"
+        aria-label="Part of a case study"
+      >
+        <FiBookOpen size={14} />
+      </button>
+    </Whisper>
+  );
+}
+
 // Section 2 — upload a migration JSON file (e.g. one downloaded from
 // ExtractPanel), review it, then confirm to send it to Mode 2
 // (createQuestionsBulk) of spMcqMigrationService in one uncapped batch.
@@ -215,6 +265,17 @@ export default function MigratePanel() {
   const [result, setResult] = useState<ImportResult | null>(null);
 
   const warningCount = useMemo(() => rows?.filter((r) => r.warnings.length > 0).length ?? 0, [rows]);
+  const caseStudyStats = useMemo(() => {
+    if (!rows) return { questionCount: 0, groupCount: 0 };
+    const keys = new Set<string>();
+    let questionCount = 0;
+    for (const r of rows) {
+      if (!r.caseStudy) continue;
+      questionCount++;
+      keys.add(r.caseStudy.key);
+    }
+    return { questionCount, groupCount: keys.size };
+  }, [rows]);
   const typeCounts = useMemo(() => {
     if (!rows) return [] as { code: string; count: number }[];
     const map = new Map<string, number>();
@@ -424,6 +485,14 @@ export default function MigratePanel() {
                 {QUESTION_TYPE_LABELS[t.code as QuestionTypeCode] ?? t.code}
               </span>
             ))}
+            {caseStudyStats.questionCount > 0 && (
+              <span className="inline-flex items-center gap-1 text-violet-700">
+                <FiBookOpen size={13} />
+                <strong className="text-violet-900">{caseStudyStats.groupCount}</strong> case stud
+                {caseStudyStats.groupCount === 1 ? "y" : "ies"} (
+                <strong className="text-violet-900">{caseStudyStats.questionCount}</strong> question(s))
+              </span>
+            )}
           </div>
           {warningCount > 0 && (
             <div className="mx-5 mb-3 flex items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
@@ -453,6 +522,7 @@ export default function MigratePanel() {
                     <td className="px-3 py-1.5 text-zinc-500">
                       <div className="flex items-center gap-1.5">
                         {r.raw.LegacyQuestionId ?? "—"}
+                        {r.caseStudy && <CaseStudyTrigger caseStudy={r.caseStudy} />}
                         <WarningTrigger warnings={r.warnings} />
                       </div>
                     </td>

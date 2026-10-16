@@ -34,6 +34,10 @@ type ImportRow = {
   AnswerJson: unknown;
   SearchText: string;
   TagsJson?: unknown;
+  // Mode 1's case-study marker for a passage-linked question — see
+  // spMcqMigrationService-deploy.sql's Mode 2 header. Same string-or-object
+  // executor quirk as PresentationJson/AnswerJson, so also normalized below.
+  CaseStudyJson?: unknown;
 };
 
 type Mode2Question = {
@@ -46,6 +50,7 @@ type Mode2Question = {
   AnswerJson: string;
   SearchText: string;
   Tags: { Key: string; Value: string }[];
+  CaseStudyJson: string | null;
 };
 
 function isJsonish(value: unknown): boolean {
@@ -132,6 +137,7 @@ export async function POST(request: Request) {
       AnswerJson: toJsonText(row.AnswerJson),
       SearchText: row.SearchText,
       Tags: tags,
+      CaseStudyJson: row.CaseStudyJson != null ? toJsonText(row.CaseStudyJson) : null,
     };
   });
 

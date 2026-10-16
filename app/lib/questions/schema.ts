@@ -942,3 +942,207 @@ export const IMPORT_JSON_EXAMPLE = `[
     "correct": ["A"]
   }
 ]`;
+
+// ---- Case study JSON import ----
+// A separate importer from parseImportJson (which is unchanged): ONE case study and the
+// questions asked about it, in a single object —
+//   { "CaseStudy": "<text, HTML or LaTeX>", "CaseStudyTitle": "<short name>", "Questions": [ {question}, ... ] }
+// Each entry of "Questions" is exactly the question object parseImportJson already reads
+// (type, difficulty, status, stem, options, correct, marks, negativeMarks, explanation, tags) —
+// the parsing is delegated to it, so both imports always read a question the same way. What this
+// adds is the shared paragraph: every question becomes a Case Study question (single correct
+// option) pointing at the one case study. CaseStudyTitle is what the case study is found by in
+// the admin; if it is missing the title is taken from the start of the paragraph.
+
+// Case-insensitive property lookup, so "CaseStudy" / "caseStudy" / "casestudy" all work.
+function readKey(obj: Record<string, unknown>, name: string): unknown {
+  const wanted = name.toLowerCase();
+  const key = Object.keys(obj).find((k) => k.toLowerCase() === wanted);
+  return key === undefined ? undefined : obj[key];
+}
+
+// Removes a comma right before a closing ] or } (outside strings) — the usual slip in
+// hand/AI-written JSON. Only used by this importer.
+function withoutTrailingCommas(text: string): string {
+  let out = "";
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      out += ch;
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      out += ch;
+      continue;
+    }
+    if (ch === ",") {
+      let j = i + 1;
+      while (j < text.length && /\s/.test(text[j])) j++;
+      if (text[j] === "]" || text[j] === "}") continue;
+    }
+    out += ch;
+  }
+  return out;
+}
+
+// One { CaseStudy, CaseStudyTitle, Questions } block -> its rows/warnings/
+// case study. `label` prefixes warnings/errors ("" for the single-block
+// form, "Case study N: " when parsed out of an array) so a problem in one
+// set of a multi-case-study upload points at the right one.
+function parseOneCaseStudyBlock(
+  block: Record<string, unknown>,
+  statusOptions: ServiceOption[],
+  key: string,
+  label: string,
+): { rows: QuestionInput[]; warnings: string[]; caseStudy: ImportedCaseStudy | null; rowCaseStudyKeys: (string | null)[] } {
+  const warnings: string[] = [];
+
+  const caseText = (asString(readKey(block, "CaseStudy")) ?? "").trim();
+  if (!caseText) throw new Error(`${label}"CaseStudy" (the paragraph) is required.`);
+
+  const questions = readKey(block, "Questions");
+  if (!Array.isArray(questions) || questions.length === 0) {
+    throw new Error(`${label}"Questions" must be a list with at least one question.`);
+  }
+
+  let title = (asString(readKey(block, "CaseStudyTitle")) ?? "").trim();
+  if (!title) {
+    title = defaultCaseStudyTitle(caseText);
+    warnings.push(`${label}No "CaseStudyTitle" — used the start of the paragraph as the title. You can rename it later.`);
+  }
+
+  // Same question parsing as the normal JSON import (untouched), then attach the case study.
+  const inner = parseImportJson(JSON.stringify(questions), statusOptions);
+  warnings.push(...inner.warnings.map((w) => `${label}${w}`));
+
+  const rowCaseStudyKeys: (string | null)[] = [];
+  const rows = inner.rows.map((row, i) => {
+    if (!isOptionBasedType(row.typeCode)) {
+      // Case-study questions are option questions; integer / one-word answers can't join one.
+      warnings.push(
+        `${label}Row ${i + 1}: only option-based questions can belong to a case study — "${row.typeCode}" was imported as a standalone question.`,
+      );
+      rowCaseStudyKeys.push(null);
+      return row;
+    }
+    if (row.correctOptionIds.length !== 1) {
+      warnings.push(
+        `${label}Row ${i + 1}: a case-study question needs exactly one correct option (found ${row.correctOptionIds.length}) — fix it before saving.`,
+      );
+    }
+    rowCaseStudyKeys.push(key);
+    return { ...row, typeCode: "case_study" as QuestionTypeCode };
+  });
+
+  const attached = rowCaseStudyKeys.some((k) => k !== null);
+  return { rows, warnings, caseStudy: attached ? { key, title, text: caseText } : null, rowCaseStudyKeys };
+}
+
+// Accepts either one case study object, or an array of them (multiple case
+// studies — each with its own paragraph and questions — in a single
+// upload). Each entry is otherwise identical to the single-object form; see
+// parseOneCaseStudyBlock.
+export function parseImportCaseStudyJson(text: string, statusOptions: ServiceOption[]): ImportResult {
+  let parsed: unknown;
+  const topWarnings: string[] = [];
+  try {
+    parsed = JSON.parse(text);
+  } catch (e) {
+    try {
+      parsed = JSON.parse(withoutTrailingCommas(text));
+      topWarnings.push("Removed a stray trailing comma from the JSON (before a closing ] or }).");
+    } catch {
+      throw new Error(`Invalid JSON: ${(e as Error).message}`);
+    }
+  }
+
+  const isMulti = Array.isArray(parsed);
+  const blocks = isMulti ? (parsed as unknown[]) : [parsed];
+  if (blocks.length === 0) {
+    throw new Error("Case study JSON array must contain at least one case study.");
+  }
+
+  const rows: QuestionInput[] = [];
+  const warnings: string[] = [...topWarnings];
+  const caseStudies: ImportedCaseStudy[] = [];
+  const rowCaseStudyKeys: (string | null)[] = [];
+
+  blocks.forEach((raw, i) => {
+    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+      throw new Error(
+        isMulti
+          ? `Case study ${i + 1}: each array entry must be an object: { "CaseStudy": "...", "CaseStudyTitle": "...", "Questions": [ ... ] }.`
+          : 'Case study JSON must be one object — { "CaseStudy": "...", "CaseStudyTitle": "...", "Questions": [ ... ] } — or an array of such objects.',
+      );
+    }
+    const label = isMulti ? `Case study ${i + 1}: ` : "";
+    const entry = raw as Record<string, unknown>;
+
+    // In an array upload, an absent/empty "CaseStudy" paragraph (e.g. a
+    // trailing bucket of miscellaneous questions after several real case
+    // studies) is a normal, expected way to mix in standalone questions —
+    // imported as ordinary questions, no warning. The single-object form
+    // still requires a paragraph, since that is the only thing it's for.
+    if (isMulti && !(asString(readKey(entry, "CaseStudy")) ?? "").trim()) {
+      const questions = readKey(entry, "Questions");
+      if (!Array.isArray(questions) || questions.length === 0) {
+        throw new Error(`${label}"Questions" must be a list with at least one question.`);
+      }
+      const inner = parseImportJson(JSON.stringify(questions), statusOptions);
+      warnings.push(...inner.warnings.map((w) => `${label}${w}`));
+      rows.push(...inner.rows);
+      rowCaseStudyKeys.push(...inner.rows.map(() => null));
+      return;
+    }
+
+    const result = parseOneCaseStudyBlock(entry, statusOptions, `json-case-${i + 1}`, label);
+    rows.push(...result.rows);
+    warnings.push(...result.warnings);
+    rowCaseStudyKeys.push(...result.rowCaseStudyKeys);
+    if (result.caseStudy) caseStudies.push(result.caseStudy);
+  });
+
+  return { rows, warnings, caseStudies, rowCaseStudyKeys };
+}
+
+// Shown by the Bulk Import drawer's case-study section ("Show Example Format").
+export const IMPORT_JSON_CASE_STUDY_EXAMPLE = `{
+  "CaseStudy": "<p>A shop sold 120 pens on Monday and 150 pens on Tuesday. A pen costs Rs 10.</p>",
+  "CaseStudyTitle": "Shop sales",
+  "Questions": [
+    {
+      "type": "mcq_single",
+      "difficulty": 2,
+      "status": "Approved",
+      "stem": "How many pens were sold in total?",
+      "options": [
+        { "id": "A", "text": "250" },
+        { "id": "B", "text": "270" },
+        { "id": "C", "text": "300" }
+      ],
+      "correct": ["B"],
+      "marks": 1,
+      "negativeMarks": 0,
+      "explanation": "120 + 150 = 270.",
+      "tags": [
+        { "key": "subject", "value": "Quantitative Reasoning" },
+        { "key": "chapter", "value": "Percent Change" }
+      ]
+    },
+    {
+      "type": "mcq_single",
+      "stem": "What was the total revenue?",
+      "options": [
+        { "id": "A", "text": "Rs 2,700" },
+        { "id": "B", "text": "Rs 1,500" }
+      ],
+      "correct": ["A"]
+    }
+  ]
+}`;
